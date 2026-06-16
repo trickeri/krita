@@ -14,7 +14,7 @@ set(kritatoolKnife_SOURCES
     )
 
 
-ki18n_wrap_ui(kritatoolKnife_static_SOURCES KisToolKnifeOptionsWidget.ui)
+ki18n_wrap_ui(kritatoolKnife_static_SRCS KisToolKnifeOptionsWidget.ui)
 
 kis_add_library(kritatoolKnife_static STATIC ${kritatoolKnife_static_SRCS})
 generate_export_header(kritatoolKnife_static BASE_NAME kritatoolKnife)
