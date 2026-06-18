@@ -37,7 +37,8 @@ public:
     ~KisToolFreehand() override;
     int flags() const override;
     void mouseMoveEvent(KoPointerEvent *event) override;
-    
+    void paint(QPainter &gc, const KoViewConverter &converter) override;
+
 
 public Q_SLOTS:
     void activate(const QSet<KoShape*> &shapes) override;

@@ -9,6 +9,10 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QQueue>
+#include <QVector2D>
+#include <QPainterPath>
+
+#include <algorithm>
 
 #include <klocalizedstring.h>
 
@@ -99,6 +103,9 @@ struct KisToolFreehandHelper::Private
 
     QList<KisPaintInformation> history;
     QList<qreal> distanceHistory;
+
+    /// Raw points buffered during a Flash Smooth stroke (painted on endPaint).
+    QList<KisPaintInformation> flashHistory;
 
     // Keeps track of past cursor positions. This is used to determine the drawing angle when
     // drawing the brush outline or starting a stroke.
@@ -247,7 +254,22 @@ KisOptimizedBrushOutline KisToolFreehandHelper::paintOpOutline(const QPointF &sa
         outline.addEllipse(info.pos(), R, R);
     }
 
+    // NB: the Flash Smooth in-progress preview is drawn by the tool's paint()
+    // (KisToolFreehand::paint), which also drives its own canvas-region updates.
+
     return outline;
+}
+
+QVector<QPointF> KisToolFreehandHelper::flashPreviewPoints() const
+{
+    QVector<QPointF> pts;
+    if (m_d->smoothingOptions->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        pts.reserve(m_d->flashHistory.size());
+        for (const KisPaintInformation &info : m_d->flashHistory) {
+            pts << info.pos();
+        }
+    }
+    return pts;
 }
 
 void KisToolFreehandHelper::cursorMoved(const QPointF &cursorPos)
@@ -345,6 +367,10 @@ void KisToolFreehandHelper::initPaintImpl(qreal startAngle,
 
     m_d->history.clear();
     m_d->distanceHistory.clear();
+    m_d->flashHistory.clear();
+    if (m_d->smoothingOptions->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        m_d->flashHistory.append(pi);
+    }
     m_d->hasLastDrawnPixel = false;
     m_d->hasTentativePixel = false;
 
@@ -512,6 +538,15 @@ void KisToolFreehandHelper::paint(KisPaintInformation &info)
      */
 
     KisPaintInformation lastUsedPaintInformation;
+
+    // Flash Smooth buffers the raw stroke and only paints it (fitted) on
+    // endPaint — nothing is drawn live.
+    if (m_d->smoothingOptions->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        m_d->flashHistory.append(info);
+        m_d->previousPaintInformation = info;
+        // The tool (continuePrimaryAction) drives the preview's canvas updates.
+        return;
+    }
 
     if (m_d->smoothingOptions->smoothingType() == KisSmoothingOptions::WEIGHTED_SMOOTHING
         && (m_d->smoothingOptions->smoothnessDistanceMin() > 0.0
@@ -700,9 +735,107 @@ void KisToolFreehandHelper::paint(KisPaintInformation &info)
     }
 }
 
+namespace {
+// Ramer–Douglas–Peucker: append indices of the points that must be kept so the
+// polyline stays within `eps` of the original. Endpoints are seeded by caller.
+void rdpKeep(const QList<KisPaintInformation> &pts, int first, int last,
+             qreal eps, QVector<int> &keep)
+{
+    if (last <= first + 1) return;
+
+    const QPointF a = pts.at(first).pos();
+    const QPointF b = pts.at(last).pos();
+    const QPointF ab = b - a;
+    const qreal abLen2 = QPointF::dotProduct(ab, ab);
+
+    qreal maxDist = -1.0;
+    int index = first;
+    for (int i = first + 1; i < last; ++i) {
+        const QPointF p = pts.at(i).pos();
+        qreal d;
+        if (abLen2 < 1e-9) {
+            d = QVector2D(p - a).length();
+        } else {
+            qreal t = QPointF::dotProduct(p - a, ab) / abLen2;
+            t = qBound(qreal(0.0), t, qreal(1.0));
+            d = QVector2D(p - (a + t * ab)).length();
+        }
+        if (d > maxDist) { maxDist = d; index = i; }
+    }
+
+    if (maxDist > eps) {
+        keep.append(index);
+        rdpKeep(pts, first, index, eps, keep);
+        rdpKeep(pts, index, last, eps, keep);
+    }
+}
+}
+
+void KisToolFreehandHelper::paintFlashSmoothStroke()
+{
+    // Take the buffer by value and drop the member immediately, so every exit
+    // path below clears it. Otherwise the short-stroke early returns (size 0/1/2
+    // anchors) leave flashHistory populated, and the tool's paint() keeps
+    // redrawing the preview ribbon after pen-up — a "stuck" stroke that only
+    // disappears when the next stroke clears the buffer in initStroke().
+    const QList<KisPaintInformation> pts = m_d->flashHistory;
+    m_d->flashHistory.clear();
+    if (pts.isEmpty()) {
+        paintAt(m_d->previousPaintInformation);
+        return;
+    }
+    if (pts.size() == 1) {
+        paintAt(pts.first());
+        return;
+    }
+
+    // "Smoothness" 0..100 (reuses the distance-max slider) -> RDP tolerance in
+    // px: higher value drops more anchors, giving cleaner / simpler curves.
+    const qreal smoothness = m_d->smoothingOptions->smoothnessDistanceMax();
+    const qreal tolerance = qMax(qreal(0.5), smoothness * qreal(0.35));
+
+    QVector<int> keep;
+    keep.append(0);
+    keep.append(pts.size() - 1);
+    rdpKeep(pts, 0, pts.size() - 1, tolerance, keep);
+    std::sort(keep.begin(), keep.end());
+    keep.erase(std::unique(keep.begin(), keep.end()), keep.end());
+
+    QList<KisPaintInformation> simp;
+    simp.reserve(keep.size());
+    for (int idx : keep) {
+        simp.append(pts.at(idx));
+    }
+
+    if (simp.size() == 2) {
+        paintLine(simp.first(), simp.last());
+        return;
+    }
+
+    // Smooth Catmull-Rom-style bezier through the simplified anchors; this reuses
+    // the brush rendering path so texture/pressure are preserved.
+    for (int i = 0; i < simp.size() - 1; ++i) {
+        const QPointF p0 = simp.at(qMax(0, i - 1)).pos();
+        const QPointF p1 = simp.at(i).pos();
+        const QPointF p2 = simp.at(i + 1).pos();
+        const QPointF p3 = simp.at(qMin(simp.size() - 1, i + 2)).pos();
+
+        QPointF tangent1 = (p2 - p0) / 6.0;
+        QPointF tangent2 = (p3 - p1) / 6.0;
+        if (tangent1.isNull()) tangent1 = (p2 - p1) / 6.0;
+        if (tangent2.isNull()) tangent2 = (p2 - p1) / 6.0;
+
+        paintBezierSegment(simp.at(i), simp.at(i + 1), tangent1, tangent2);
+    }
+    // flashHistory was already cleared at the top, so the tool's paint() draws
+    // no preview ribbon once endStroke repaints the captured region.
+}
+
 void KisToolFreehandHelper::endPaint()
 {
-    if (!m_d->hasPaintAtLeastOnce) {
+    if (m_d->smoothingOptions->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        paintFlashSmoothStroke();
+    } else if (!m_d->hasPaintAtLeastOnce) {
         paintAt(m_d->previousPaintInformation);
     } else if (m_d->smoothingOptions->smoothingType() != KisSmoothingOptions::NO_SMOOTHING) {
         finishStroke();

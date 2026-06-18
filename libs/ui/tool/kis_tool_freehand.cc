@@ -11,7 +11,12 @@
 
 #include "kis_tool_freehand.h"
 #include <QPainter>
+#include <QPen>
+#include <QPolygonF>
+#include <QPainterPath>
+#include <QColor>
 #include <QRect>
+#include <KoColor.h>
 #include <QThreadPool>
 #include <QApplication>
 #include <QScreen>
@@ -190,7 +195,23 @@ void KisToolFreehand::doStroke(KoPointerEvent *event)
 
 void KisToolFreehand::endStroke()
 {
+    // Capture the Flash Smooth preview footprint before endPaint() clears it, so
+    // we can repaint that region away once the fitted stroke is committed.
+    QRectF flashClearRect;
+    if (m_helper && smoothingOptions()->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        const QVector<QPointF> pts = m_helper->flashPreviewPoints();
+        if (pts.size() > 1) {
+            const qreal r = currentPaintOpPreset()->settings()->paintOpSize();
+            flashClearRect = QPolygonF(pts).boundingRect().adjusted(-r, -r, r, r);
+        }
+    }
+
     m_helper->endPaint();
+
+    if (!flashClearRect.isEmpty()) {
+        updateCanvasPixelRect(flashClearRect);
+    }
+
     bool paintOpIgnoredEvent = currentPaintOpPreset()->settings()->mouseReleaseEvent();
     Q_UNUSED(paintOpIgnoredEvent);
 }
@@ -247,6 +268,18 @@ void KisToolFreehand::continuePrimaryAction(KoPointerEvent *event)
      * Actual painting
      */
     doStroke(event);
+
+    // Flash Smooth draws nothing to the layer mid-stroke; repaint the canvas
+    // region of the newly added preview segment (inflated by the brush radius)
+    // so the live brush-width preview keeps up with the cursor.
+    if (m_helper && smoothingOptions()->smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        const QVector<QPointF> pts = m_helper->flashPreviewPoints();
+        if (pts.size() > 1) {
+            const qreal r = currentPaintOpPreset()->settings()->paintOpSize();
+            QRectF seg = QRectF(pts.at(pts.size() - 2), pts.last()).normalized();
+            updateCanvasPixelRect(seg.adjusted(-r, -r, r, r));
+        }
+    }
 }
 
 void KisToolFreehand::endPrimaryAction(KoPointerEvent *event)
@@ -481,6 +514,61 @@ void KisToolFreehand::updateMaskSyntheticEventsFromTouch()
 void KisToolFreehand::explicitUpdateOutline()
 {
     requestUpdateOutline(m_outlineDocPoint, 0);
+}
+
+void KisToolFreehand::paint(QPainter &gc, const KoViewConverter &converter)
+{
+    // Draw the base decorations (brush outline etc.) first.
+    KisToolPaint::paint(gc, converter);
+
+    // Flash Smooth paints nothing to the layer until pen-up, so draw the raw
+    // in-progress stroke as a translucent ribbon in the brush colour, sized to
+    // the brush, so the user can judge the space it will fill. It snaps to the
+    // fitted curve on pen-up.
+    const QVector<QPointF> preview = m_helper ? m_helper->flashPreviewPoints()
+                                              : QVector<QPointF>();
+    if (preview.size() > 1) {
+        QPainterPath centerline;
+        centerline.moveTo(pixelToView(preview.first()));
+        for (int i = 1; i < preview.size(); ++i) {
+            centerline.lineTo(pixelToView(preview.at(i)));
+        }
+
+        // Brush diameter (document px) -> view px, robust to zoom/rotation.
+        const qreal brushSize = currentPaintOpPreset()->settings()->paintOpSize();
+        const qreal viewWidth =
+            QLineF(pixelToView(QPointF(0, 0)), pixelToView(QPointF(brushSize, 0))).length();
+
+        // Stroke to a ribbon and fill it as a single winding region, so where
+        // the stroke crosses itself (tight loops) the translucency doesn't
+        // compound into a dark flare.
+        QPainterPathStroker stroker;
+        stroker.setWidth(qMax(qreal(1.0), viewWidth));
+        stroker.setCapStyle(Qt::RoundCap);
+        stroker.setJoinStyle(Qt::RoundJoin);
+        QPainterPath ribbon = stroker.createStroke(centerline);
+        ribbon.setFillRule(Qt::WindingFill);
+
+        gc.save();
+        gc.setRenderHint(QPainter::Antialiasing, true);
+        if (isEraser()) {
+            // Erasing removes pixels rather than laying down the foreground
+            // colour, so a solid fg-coloured ribbon would read as grey paint
+            // (and look identical to a "stuck" stroke). Show the footprint as a
+            // neutral dashed outline instead, so the user reads it as erasing.
+            QPen pen(QColor(128, 128, 128, 200));
+            pen.setStyle(Qt::DashLine);
+            pen.setCosmetic(true);
+            gc.setPen(pen);
+            gc.setBrush(Qt::NoBrush);
+            gc.drawPath(ribbon);
+        } else {
+            QColor c = currentFgColor().toQColor();
+            c.setAlphaF(0.45);
+            gc.fillPath(ribbon, c);
+        }
+        gc.restore();
+    }
 }
 
 KisOptimizedBrushOutline KisToolFreehand::getOutlinePath(const QPointF &documentPos,

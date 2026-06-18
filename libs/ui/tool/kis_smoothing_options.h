@@ -22,7 +22,8 @@ public:
         SIMPLE_SMOOTHING,
         WEIGHTED_SMOOTHING,
         STABILIZER,
-        PIXEL_PERFECT
+        PIXEL_PERFECT,
+        FLASH_SMOOTH    //!< Adobe-Animate-style post-stroke curve fitting
     };
 
 public:

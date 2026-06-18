@@ -72,6 +72,10 @@ public:
                                             const KisPaintOpSettingsSP globalSettings,
                                             KisPaintOpSettings::OutlineMode mode) const;
 
+    /// Raw in-progress points of a Flash Smooth stroke (image px), for the
+    /// live preview. Empty unless a Flash stroke is active.
+    QVector<QPointF> flashPreviewPoints() const;
+
 Q_SIGNALS:
     /**
      * The signal is emitted when the outline should be updated
@@ -130,8 +134,11 @@ protected:
 private:
     void paint(KisPaintInformation &info );
     void paintBezierSegment(KisPaintInformation pi1, KisPaintInformation pi2,
-                                                   QPointF tangent1, QPointF tangent2 
+                                                   QPointF tangent1, QPointF tangent2
                                                  );
+
+    /// Flash Smooth: simplify + bezier-fit the buffered stroke, then paint it.
+    void paintFlashSmoothStroke();
 
     void stabilizerStart(KisPaintInformation firstPaintInfo);
     void stabilizerEnd();

@@ -187,6 +187,21 @@ void KisToolBrush::slotSetSmoothingType(int index)
         // scalable distance option is disabled due to bug 421314
         showControl(m_chkUseScalableDistance, false);
         break;
+    case KisSmoothingOptions::FLASH_SMOOTH:
+        smoothingOptions()->setSmoothingType(KisSmoothingOptions::FLASH_SMOOTH);
+        // Reuse the "Max" slider as the single Smoothness control.
+        m_lblSmoothnessDistanceMin->setVisible(false);
+        m_sliderSmoothnessDistanceMin->setVisible(false);
+        m_lblSmoothnessDistanceMax->setVisible(true);
+        m_sliderSmoothnessDistanceMax->setVisible(true);
+        m_distanceAspectButton->setVisible(false);
+        showControl(m_sliderTailAggressiveness, false);
+        showControl(m_chkSmoothPressure, false);
+        showControl(m_chkUseScalableDistance, false);
+        showControl(m_sliderDelayDistance, false);
+        showControl(m_chkFinishStabilizedCurve, false);
+        showControl(m_chkStabilizeSensors, false);
+        break;
     case KisSmoothingOptions::PIXEL_PERFECT:
     default:
         smoothingOptions()->setSmoothingType(KisSmoothingOptions::PIXEL_PERFECT);
@@ -211,6 +226,18 @@ void KisToolBrush::updateSmoothnessDistanceLabel()
 {
     const qreal oldValueMin = m_sliderSmoothnessDistanceMin->value();
     const qreal oldValueMax = m_sliderSmoothnessDistanceMax->value();
+
+    if (smoothingType() == KisSmoothingOptions::FLASH_SMOOTH) {
+        // Single 0..100 "Smoothness" knob on the Max slider (Min is hidden).
+        m_lblSmoothnessDistanceMax->setText(i18n("Smoothness:"));
+        m_sliderSmoothnessDistanceMax->setRange(0.0, 100.0, 0);
+        m_sliderSmoothnessDistanceMax->setSingleStep(1);
+        m_sliderSmoothnessDistanceMax->setExponentRatio(1.0);
+        if (!qFuzzyCompare(m_sliderSmoothnessDistanceMax->value(), oldValueMax)) {
+            m_sliderSmoothnessDistanceMax->setValue(qRound(oldValueMax));
+        }
+        return;
+    }
 
     if (smoothingType() == KisSmoothingOptions::STABILIZER) {
         m_lblSmoothnessDistanceMin->setText(i18n("Sample Count at Max Speed:"));
@@ -416,7 +443,8 @@ QWidget * KisToolBrush::createOptionWidget()
                                  << i18nc("@item:inlistbox Brush Smoothing", "Basic")
                                  << i18nc("@item:inlistbox Brush Smoothing", "Weighted")
                                  << i18nc("@item:inlistbox Brush Smoothing", "Stabilizer")
-                                 << i18nc("@item:inlistbox Brush Smoothing", "Pixel"));
+                                 << i18nc("@item:inlistbox Brush Smoothing", "Pixel")
+                                 << i18nc("@item:inlistbox Brush Smoothing", "Flash"));
     connect(m_cmbSmoothingType, SIGNAL(currentIndexChanged(int)), this, SLOT(slotSetSmoothingType(int)));
     addOptionWidgetOption(m_cmbSmoothingType, new QLabel(i18n("Brush Smoothing:"), optionsWidget));
 
