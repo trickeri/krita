@@ -936,7 +936,31 @@ QVector<qreal> KisCoordinatesConverter::standardZoomLevels() const
 
 QVector<qreal> KisCoordinatesConverter::Private::StandardZoomLevelsInitializer::initialize() const
 {
-    return KoZoomMode::generateStandardZoomLevels(m_d->minZoom, m_d->maxZoom);
+    // nuldrums: the discrete (mouse-wheel) zoom steps in fixed 10% increments
+    // rather than Krita's geometric levels, so the wide jumps (e.g. 130% -> 200%)
+    // become even 10-point stops. Use Ctrl+Space for finer levels in between.
+    // The zoom dropdown is unaffected: KoZoomActionState builds its own list
+    // straight from KoZoomMode::generateStandardZoomLevels().
+    const qreal eps = 1e-6;
+    QVector<qreal> levels;
+
+    // Keep the fit-to-view minimum reachable when it falls below the 10% grid.
+    if (m_d->minZoom < 0.10 - eps) {
+        levels.append(m_d->minZoom);
+    }
+
+    const int firstPct = qMax(10, int(std::ceil(m_d->minZoom * 10.0 - eps)) * 10);
+    const int lastPct = int(std::floor(m_d->maxZoom * 100.0 + eps));
+    for (int pct = firstPct; pct <= lastPct; pct += 10) {
+        levels.append(pct / 100.0);
+    }
+
+    // Guarantee the maximum is reachable even if it isn't a clean 10% multiple.
+    if (levels.isEmpty() || levels.last() < m_d->maxZoom - eps) {
+        levels.append(m_d->maxZoom);
+    }
+
+    return levels;
 }
 
 void KisCoordinatesConverter::recalculateZoomLevelLimits()
