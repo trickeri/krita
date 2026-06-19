@@ -436,6 +436,7 @@ set(kritaui_LIB_SRCS
     KisMainWindow.cpp
     KisOpenPane.cpp
     KisPart.cpp
+    KisVoiceChatListener.cpp
     KisTemplate.cpp
     KisTemplateCreateDia.cpp
     KisTemplateGroup.cpp

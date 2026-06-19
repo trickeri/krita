@@ -136,6 +136,7 @@
 #include "kis_statusbar.h"
 #include "KisView.h"
 #include "KisViewManager.h"
+#include "KisVoiceChatListener.h"
 #include "thememanager.h"
 #include "kis_animation_importer.h"
 #include "dialogs/kis_dlg_import_image_sequence.h"
@@ -388,6 +389,23 @@ KisMainWindow::KisMainWindow(QUuid uuid)
 
     // Load the per-application plugins (Right now, only Python) We do this only once, when the first mainwindow is being created.
     KoPluginLoader::instance()->load("Krita/ApplicationPlugin", KoPluginLoader::PluginsConfig(), qApp, true);
+
+    // Nuldrums: listen on the voicechat dictation daemon's transcript socket. When Krita is
+    // focused, voicechat runs in "emit" mode (no paste) and broadcasts the transcript here.
+    // One listener serves the whole app (created with the first main window); each transcript
+    // is dispatched to whichever main window is currently active.
+    {
+        static QPointer<KisVoiceChatListener> voiceChat;
+        if (!voiceChat) {
+            voiceChat = new KisVoiceChatListener(qApp);
+            connect(voiceChat, &KisVoiceChatListener::transcriptReceived, qApp,
+                    [](const QString &text, const QString &app, const QString &mode) {
+                        if (KisMainWindow *active = KisPart::instance()->currentMainwindow()) {
+                            active->handleVoiceTranscript(text, app, mode);
+                        }
+                    });
+        }
+    }
 
     KoToolBoxFactory toolBoxFactory;
     QDockWidget *toolbox = createDockWidget(&toolBoxFactory);
@@ -1019,6 +1037,20 @@ void KisMainWindow::setCanvasDetached(bool detach)
 QWidget * KisMainWindow::canvasWindow() const
 {
     return d->canvasWindow;
+}
+
+void KisMainWindow::handleVoiceTranscript(const QString &text, const QString &app, const QString &mode)
+{
+    // Every transcript is broadcast to all listeners, so ignore the ones voicechat already
+    // handled by pasting elsewhere (e.g. into a terminal); only "emit" mode means voicechat
+    // withheld the paste expecting us — i.e. Krita was the focused app — to consume it.
+    if (mode != QLatin1String("emit")) {
+        return;
+    }
+    // Nuldrums hook: a transcript was dictated via voicechat while Krita was focused.
+    // TODO(nuldrums): act on the dictated text (e.g. drive a tool/action, set a layer name).
+    // For now just log it so the wiring is verifiable end-to-end.
+    dbgKrita << "voicechat transcript (app=" << app << "mode=" << mode << "):" << text;
 }
 
 void KisMainWindow::clearRecentFiles()

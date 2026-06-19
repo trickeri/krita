@@ -211,6 +211,14 @@ Q_SIGNALS:
 
 public Q_SLOTS:
 
+    /**
+     * Nuldrums: handle a transcript dictated via the voicechat daemon (emit mode).
+     * This is the hook for voice-driven behavior in Krita — fill in what the dictated
+     * @p text should do. @p app is the focused app id voicechat saw; @p mode is its
+     * routing mode (normally "emit" here). Dispatched to the active main window by the
+     * app-level KisVoiceChatListener wired in the constructor.
+     */
+    void handleVoiceTranscript(const QString &text, const QString &app, const QString &mode);
 
     /**
      * clears the list of the recent files
