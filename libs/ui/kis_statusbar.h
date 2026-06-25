@@ -77,6 +77,9 @@ public:
     void addExtraWidget(QWidget *widget);
     void removeExtraWidget(QWidget *widget);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 public Q_SLOTS:
 
     void imageSizeChanged();
@@ -88,6 +91,7 @@ public Q_SLOTS:
 
 private Q_SLOTS:
     void updateSelectionIcon();
+    void updateSelectionActionsVisibility();
     void showMemoryInfoToolTip();
     void slotCanvasAngleSelectorAngleChanged(qreal angle);
     void slotCanvasRotationChanged();
@@ -101,6 +105,10 @@ private:
     void addStatusBarItem(QWidget *widget, int stretch = 0, bool permanent = false);
     void updateMemoryStatus();
 
+    /// Float the zoom dropdown+slider so its right edge tracks the right edge of
+    /// the document viewport (canvas), sliding as the side dockers are resized.
+    void repositionZoomWidget();
+
 private:
 
     QPointer<KisViewManager> m_viewManager;
@@ -110,6 +118,7 @@ private:
     QScopedPointer<KoProgressUpdater> m_progressUpdater;
 
     QToolButton *m_selectionStatus {nullptr};
+    QWidget *m_selectionActions {nullptr};
     KisMemoryReportButton *m_memoryReportBox {nullptr};
     QWidget *m_extraWidgetsParent {nullptr};
     QBoxLayout *m_extraWidgetsLayout {nullptr};

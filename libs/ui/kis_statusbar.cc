@@ -21,6 +21,7 @@
 #include <KoToolManager.h>
 #include <KoViewConverter.h>
 #include <QHBoxLayout>
+#include <QEvent>
 
 #include <KisUsageLogger.h>
 
@@ -46,6 +47,8 @@
 
 #include "KisMainWindow.h"
 #include "kis_config.h"
+#include "kis_config_notifier.h"
+#include <QToolButton>
 
 #include "widgets/KisMemoryReportButton.h"
 
@@ -72,6 +75,44 @@ void KisStatusBar::setup()
 
     m_statusBar = m_viewManager->mainWindow()->statusBar();
 
+    // Selection Actions Bar, hosted at the far-left of the status bar (it used to
+    // be a draggable on-canvas overlay, see kis_selection_actions_panel.*). Shown
+    // only while a selection is active and the feature is enabled in settings.
+    {
+        struct SelAction { const char *icon; QString tip; void (KisSelectionManager::*slot)(); };
+        const SelAction selActions[] = {
+            {"select-all", i18n("Select All"), &KisSelectionManager::selectAll},
+            {"select-invert", i18n("Invert Selection"), &KisSelectionManager::invert},
+            {"select-clear", i18n("Deselect"), &KisSelectionManager::deselect},
+            {"krita_tool_color_fill", i18n("Fill Selection with Color"), &KisSelectionManager::fillForegroundColor},
+            {"draw-eraser", i18n("Clear Selection"), &KisSelectionManager::clear},
+            {"duplicatelayer", i18n("Copy To New Layer"), &KisSelectionManager::copySelectionToNewLayer},
+            {"tool_crop", i18n("Crop to Selection"), &KisSelectionManager::imageResizeToSelection},
+        };
+
+        m_selectionActions = new QWidget();
+        m_selectionActions->setObjectName("selectionActions");
+        QHBoxLayout *selActionsLayout = new QHBoxLayout(m_selectionActions);
+        selActionsLayout->setContentsMargins(2, 0, 2, 0);
+        selActionsLayout->setSpacing(0);
+
+        KisSelectionManager *selMgr = m_viewManager->selectionManager();
+        for (const SelAction &a : selActions) {
+            QToolButton *btn = new QToolButton(m_selectionActions);
+            btn->setIcon(KisIconUtils::loadIcon(QLatin1String(a.icon)));
+            btn->setToolTip(a.tip);
+            btn->setAutoRaise(true);
+            btn->setIconSize(QSize(16, 16));
+            connect(btn, &QToolButton::clicked, selMgr, a.slot);
+            selActionsLayout->addWidget(btn);
+        }
+        addStatusBarItem(m_selectionActions);
+        m_selectionActions->setVisible(false);
+
+        connect(KisConfigNotifier::instance(), SIGNAL(configChanged()),
+                this, SLOT(updateSelectionActionsVisibility()));
+    }
+
     connect(m_selectionStatus, SIGNAL(clicked()), m_viewManager->selectionManager(), SLOT(slotToggleSelectionDecoration()));
     connect(m_viewManager->selectionManager(), SIGNAL(displaySelectionChanged()), SLOT(updateSelectionToolTip()));
     connect(m_viewManager->mainWindow(), SIGNAL(themeChanged()), this, SLOT(updateSelectionIcon()));
@@ -88,12 +129,10 @@ void KisStatusBar::setup()
     addStatusBarItem(m_statusBarStatusLabel, 2);
     m_statusBarStatusLabel->setVisible(false);
 
-    m_statusBarProfileLabel = new KSqueezedTextLabel();
-    m_statusBarProfileLabel->setObjectName("statsBarProfileLabel");
-    m_statusBarProfileLabel->setSizePolicy(QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding));
-    m_statusBarProfileLabel->setContentsMargins(5, 5, 5, 5);
-    addStatusBarItem(m_statusBarProfileLabel, 3);
-    m_statusBarProfileLabel->setVisible(false);
+    // The color-space / ICC-profile readout ("RGB/Alpha (8-bit integer/channel)
+    // <profile>.icc") is intentionally not created — it's document-settings info,
+    // not something useful to surface while actively painting. setProfile() and
+    // updateStatusBarProfileLabel() guard against the null label.
 
     m_progress = new KisProgressWidget();
     m_progress->setObjectName("ProgressBar");
@@ -136,6 +175,10 @@ void KisStatusBar::setup()
 
     connect(m_canvasAngleSelector, SIGNAL(angleChanged(qreal)), SLOT(slotCanvasAngleSelectorAngleChanged(qreal)));
     m_canvasAngleSelector->setVisible(false);
+
+    // Watch the status bar itself so the floating zoom widget re-aligns to the
+    // canvas right edge whenever the window (and therefore the status bar) resizes.
+    m_statusBar->installEventFilter(this);
 }
 
 KisStatusBar::~KisStatusBar()
@@ -149,7 +192,13 @@ void KisStatusBar::setView(QPointer<KisView> imageView)
             m_imageView->canvasBase()->canvasController()->proxyObject->disconnect(this);
         }
         m_imageView->disconnect(this);
-        removeStatusBarItem(m_imageView->zoomManager()->zoomActionWidget());
+        if (QWidget *zoomWidget = m_imageView->zoomManager()->zoomActionWidget()) {
+            zoomWidget->removeEventFilter(this);
+            zoomWidget->hide();
+        }
+        if (m_imageView->canvasController()) {
+            m_imageView->canvasController()->removeEventFilter(this);
+        }
         m_imageView = 0;
     }
 
@@ -166,13 +215,27 @@ void KisStatusBar::setView(QPointer<KisView> imageView)
                 this, &KisStatusBar::slotCanvasRotationChanged);
         updateStatusBarProfileLabel();
         slotCanvasRotationChanged();
-        addStatusBarItem(m_imageView->zoomManager()->zoomActionWidget());
+
+        // The zoom dropdown+slider is not placed in the status bar's layout (which
+        // would pin it to the far window edge, under the right dockers). Instead it
+        // floats as a child of the status bar and is positioned so its right edge
+        // tracks the document viewport's right edge — see repositionZoomWidget().
+        if (QWidget *zoomWidget = m_imageView->zoomManager()->zoomActionWidget()) {
+            zoomWidget->setParent(m_statusBar);
+            zoomWidget->installEventFilter(this);
+            zoomWidget->show();
+        }
+        if (m_imageView->canvasController()) {
+            m_imageView->canvasController()->installEventFilter(this);
+        }
+        repositionZoomWidget();
     }
     else {
         m_canvasAngleSelector->setVisible(false);
     }
 
     imageSizeChanged();
+    updateSelectionActionsVisibility();
 }
 
 void KisStatusBar::addStatusBarItem(QWidget *widget, int stretch, bool permanent)
@@ -430,6 +493,16 @@ void KisStatusBar::setSelection(KisImageWSP image)
 {
     Q_UNUSED(image);
     updateSelectionToolTip();
+    updateSelectionActionsVisibility();
+}
+
+void KisStatusBar::updateSelectionActionsVisibility()
+{
+    if (!m_selectionActions) return;
+
+    KisConfig cfg(true);
+    const bool show = cfg.selectionActionBar() && m_viewManager && m_viewManager->selection();
+    m_selectionActions->setVisible(show);
 }
 
 void KisStatusBar::setProfile(KisImageWSP image)
@@ -462,6 +535,50 @@ void KisStatusBar::updateStatusBarProfileLabel()
 KoProgressUpdater *KisStatusBar::progressUpdater()
 {
     return m_progressUpdater.data();
+}
+
+bool KisStatusBar::eventFilter(QObject *watched, QEvent *event)
+{
+    const QEvent::Type type = event->type();
+    if ((type == QEvent::Resize || type == QEvent::Move || type == QEvent::Show)
+        && m_imageView) {
+
+        if (watched == m_statusBar
+            || watched == m_imageView->canvasController()
+            || watched == m_imageView->zoomManager()->zoomActionWidget()) {
+            repositionZoomWidget();
+        }
+    }
+
+    return QObject::eventFilter(watched, event);
+}
+
+void KisStatusBar::repositionZoomWidget()
+{
+    if (!m_imageView || !m_statusBar) return;
+
+    QWidget *zoomWidget = m_imageView->zoomManager()->zoomActionWidget();
+    QWidget *canvasFrame = m_imageView->canvasController();
+    if (!zoomWidget || !canvasFrame) return;
+    if (zoomWidget->parentWidget() != m_statusBar) return;
+
+    const QSize hint = zoomWidget->sizeHint();
+    const int w = hint.width();
+    const int h = hint.height();
+
+    // Right edge of the document viewport, expressed in status-bar coordinates,
+    // so the zoom controls follow the canvas and slide as the dockers resize.
+    const QPoint canvasRightGlobal = canvasFrame->mapToGlobal(QPoint(canvasFrame->width(), 0));
+    const int rightX = m_statusBar->mapFromGlobal(canvasRightGlobal).x();
+
+    const int x = qMax(0, rightX - w);
+    const int y = (m_statusBar->height() - h) / 2;
+
+    const QRect target(x, y, w, h);
+    if (zoomWidget->geometry() != target) {
+        zoomWidget->setGeometry(target);
+    }
+    zoomWidget->raise();
 }
 
 void KisStatusBar::addExtraWidget(QWidget *widget)

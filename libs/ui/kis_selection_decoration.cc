@@ -176,7 +176,10 @@ void KisSelectionDecoration::slotConfigChanged()
     m_opacity = imageConfig.selectionOutlineOpacity();
     m_maskColor = imageConfig.selectionOverlayMaskColor();
     m_antialiasSelectionOutline = cfg.antialiasSelectionOutline();
-    m_selectionActionsPanel->setEnabled(cfg.selectionActionBar());
+    // The on-canvas Selection Actions overlay is disabled in this fork; the same
+    // actions now live at the far-left of the status bar (see KisStatusBar). The
+    // panel object is kept but never enabled, so draw()/setVisible() are no-ops.
+    m_selectionActionsPanel->setEnabled(false);
 }
 
 void KisSelectionDecoration::slotCanvasResourcesChanged(int key, const QVariant &v)

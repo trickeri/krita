@@ -297,22 +297,17 @@ QPoint KisSelectionActionsPanel::updateCanvasBoundaries(QPoint position, QWidget
 
 QPoint KisSelectionActionsPanel::initialDragHandlePosition() const
 {
-    KisSelectionSP selection = d->m_viewManager->selection();
-    KisCanvasWidgetBase *canvas = dynamic_cast<KisCanvasWidgetBase*>(d->m_viewManager->canvas());
-    KIS_ASSERT(selection);
-    KIS_ASSERT(canvas);
+    QWidget *canvasWidget = d->m_viewManager->canvas();
+    KIS_ASSERT(canvasWidget);
 
-    QRectF selectionBounds = selection->selectedRect();
-    int selectionBottom = selectionBounds.bottom();
-    QPointF selectionCenter = selectionBounds.center();
-    QPointF bottomCenter(selectionCenter.x(), selectionBottom);
+    // Anchor the actions bar to the bottom-center of the document viewport
+    // (just above the status bar), rather than following the selection or
+    // sitting in a corner over the artwork. It stays draggable from there.
+    QRect canvasBounds = canvasWidget->rect();
+    QPoint bottomCenter(canvasBounds.center().x() - (d->m_actionBarWidth / 2),
+                        canvasBounds.bottom() - BUTTON_SIZE - BUFFER_SPACE);
 
-    QPointF widgetBottomCenter = canvas->coordinatesConverter()->imageToWidget(bottomCenter); // converts current selection's QPointF into canvasWidget's QPointF space
-
-    widgetBottomCenter.setX(widgetBottomCenter.x() - (d->m_actionBarWidth / 2)); // centers toolbar midpoint with the selection center
-    widgetBottomCenter.setY(widgetBottomCenter.y() + BUFFER_SPACE);
-
-    return updateCanvasBoundaries(widgetBottomCenter.toPoint(), d->m_viewManager->canvas());
+    return updateCanvasBoundaries(bottomCenter, canvasWidget);
 }
 
 void KisSelectionActionsPanel::drawActionBarBackground(QPainter &painter, const KoColorDisplayRendererInterface *displayRendererInterface) const
