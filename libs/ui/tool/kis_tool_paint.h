@@ -134,6 +134,9 @@ protected:
 
 private:
     KisOptimizedBrushOutline tryFixBrushOutline(const KisOptimizedBrushOutline &originalOutline);
+    /// Appends a tiny "E" glyph at the top-left edge of the brush outline so the
+    /// auto-inverting cursor itself signals erase mode (same XOR colouring).
+    void addEraserBadge(KisOptimizedBrushOutline &outline);
     bool isSamplingAction(AlternateAction action);
 private:
 

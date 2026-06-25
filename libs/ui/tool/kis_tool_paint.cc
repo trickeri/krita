@@ -259,11 +259,59 @@ KisOptimizedBrushOutline KisToolPaint::tryFixBrushOutline(const KisOptimizedBrus
     return outline;
 }
 
+void KisToolPaint::addEraserBadge(KisOptimizedBrushOutline &outline)
+{
+    if (outline.isEmpty()) {
+        return;
+    }
+
+    // Tiny capital "E", sized in view pixels (independent of brush/zoom), perched
+    // at the top-left of the brush outline's bounding box. Drawn as stroked
+    // polylines so it rides the same XOR cursor colouring as the outline (bright
+    // pink over dark areas, black over light).
+    const QRectF bounds = outline.boundingRect();
+
+    const qreal glyphHeight = 4.5;
+    const qreal glyphWidth = glyphHeight * 0.62;
+
+    // Hover the "E" just outside the brush outline's edge, off to the upper-left.
+    // Anchor to the actual edge point along the upper-left diagonal (NOT the
+    // bounding-box corner, which sits r*(sqrt2-1) further out and so "races away"
+    // as the brush grows), then step a *constant* gap beyond it. This keeps the
+    // separation the same at every brush size.
+    const qreal invSqrt2 = 0.70710678;
+    const QPointF center = bounds.center();
+    const QPointF edge(center.x() - 0.5 * bounds.width() * invSqrt2,
+                       center.y() - 0.5 * bounds.height() * invSqrt2);
+
+    const qreal gap = 6.0;
+    const qreal right = edge.x() - gap * invSqrt2;
+    const qreal bottom = edge.y() - gap * invSqrt2;
+    const qreal left = right - glyphWidth;
+    const qreal top = bottom - glyphHeight;
+    const qreal midY = top + glyphHeight / 2.0;
+
+    QPainterPath e;
+    e.moveTo(left, top);       // vertical spine
+    e.lineTo(left, bottom);
+    e.moveTo(left, top);       // top arm
+    e.lineTo(right, top);
+    e.moveTo(left, midY);      // middle arm (a touch shorter, like a real "E")
+    e.lineTo(right - glyphWidth * 0.2, midY);
+    e.moveTo(left, bottom);    // bottom arm
+    e.lineTo(right, bottom);
+
+    outline.addPath(e);
+}
+
 void KisToolPaint::paint(QPainter &gc, const KoViewConverter &converter)
 {
     Q_UNUSED(converter);
 
     KisOptimizedBrushOutline path = tryFixBrushOutline(pixelToView(m_currentOutline));
+    if (isEraser()) {
+        addEraserBadge(path);
+    }
     paintToolOutline(&gc, path);
 
     m_colorSamplerHelper.paint(gc, converter);
