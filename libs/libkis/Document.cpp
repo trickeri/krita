@@ -36,6 +36,7 @@
 #include <kis_filter_configuration.h>
 #include <kis_filter_registry.h>
 #include <kis_selection.h>
+#include <kis_pixel_selection.h>
 #include <KisMimeDatabase.h>
 #include <kis_filter_strategy.h>
 #include <kis_guides_config.h>
@@ -362,12 +363,36 @@ void Document::setSelection(Selection* value)
 {
     if (!d->document) return;
     if (!d->document->image()) return;
+    KisImageSP image = d->document->image();
     if (value) {
-        d->document->image()->undoAdapter()->addCommand(new KisSetGlobalSelectionCommand(d->document->image(), value->selection()));
+        image->undoAdapter()->addCommand(new KisSetGlobalSelectionCommand(image, value->selection()));
     }
     else {
-        d->document->image()->undoAdapter()->addCommand(new KisSetGlobalSelectionCommand(d->document->image(), nullptr));
+        image->undoAdapter()->addCommand(new KisSetGlobalSelectionCommand(image, nullptr));
     }
+
+    // Nuldrums: make a programmatically-set selection show its marching ants *now*,
+    // not only after a reload. The marching-ants decoration only paints when
+    // selection->outlineCacheValid() is true AND outlineCache() is non-empty.
+    //
+    // The catch: a freshly-built KisPixelSelection starts with outlineCacheValid ==
+    // true but an EMPTY cache (kis_pixel_selection.cpp ctor), and writing pixels via
+    // libkis setPixelData does not invalidate it. So the cache reads "valid but empty",
+    // KisSelection::recalculateOutlineCache()'s `if (!valid)` guard skips the trace,
+    // and the decoration early-returns on an empty path — no ants until a reload
+    // rebuilds the cache. Fix: explicitly invalidate, then recalculate so the outline
+    // is actually traced from the pixel data. notifySelectionChanged() then drives the
+    // decoration repaint (no image projection refresh needed — a selection is an
+    // overlay, and refreshing the projection storms partial repaints that erase it).
+    KisSelectionSP selection = image->globalSelection();
+    if (selection) {
+        if (selection->pixelSelection()) {
+            selection->pixelSelection()->invalidateOutlineCache();
+        }
+        selection->updateProjection(image->bounds());   // builds shape-selection outlines
+        selection->recalculateOutlineCache();
+    }
+    image->notifySelectionChanged();
 }
 
 
