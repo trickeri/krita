@@ -125,9 +125,13 @@ int KisNodeViewColorScheme::rowHeight() const
 
 int KisNodeViewColorScheme::visibilityColumnWidth() const
 {
-    return border() +
+    // Room for the visibility "eye" plus the solo "S" toggle drawn to its right
+    // (two equally-sized cells).
+    const int cellWidth =
+        border() +
         2 * visibilityMargin() + visibilitySize() +
         border();
+    return 2 * cellWidth;
 }
 
 int KisNodeViewColorScheme::indentation() const

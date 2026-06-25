@@ -59,6 +59,11 @@ public:
 
     QList<QModelIndex> shiftClickedIndexes;
 
+    // Layers that are currently "soloed" via the dedicated solo ("S") column.
+    // The set is additive (Ableton/Kdenlive style): each click adds or removes a
+    // layer; when it empties, the pre-solo visibility of every layer is restored.
+    QList<QPersistentModelIndex> soloedIndexes;
+
     enum StasisOperation {
         Record,
         Review,
@@ -78,6 +83,9 @@ public:
     void restorePropertyInStasisRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty);
 
     bool checkImmediateStasis(const QModelIndex &root, const OptionalProperty &clickedProperty);
+
+    bool isIndexSoloed(const QModelIndex &index) const;
+    void toggleSoloOnIndex(const QModelIndex &index);
 
     void getParentsIndex(QList<QModelIndex> &items, const QModelIndex &index);
     void getChildrenIndex(QList<QModelIndex> &items, const QModelIndex &index);
@@ -132,6 +140,7 @@ void NodeDelegate::paint(QPainter *p, const QStyleOptionViewItem &o, const QMode
             drawSelectedButton(p, o, index, style);
         } else if (index.column() == NodeView::VISIBILITY_COL) {
             drawVisibilityIcon(p, option, index); // TODO hide when dragging
+            drawSoloIcon(p, option, index);
         } else {
             p->setFont(option.font);
             drawColorLabel(p, option, index);
@@ -521,6 +530,12 @@ void NodeDelegate::Private::toggleProperty(KisBaseNode::PropertyList &props, con
 {
     QModelIndex root(view->rootIndex());
 
+    // A direct click on the visibility eye supersedes any additive solo session
+    // tracked by the "S" column, so forget that set to keep the S markers honest.
+    if (clickedProperty->id == KisLayerPropertiesIcons::visible.id()) {
+        soloedIndexes.clear();
+    }
+
     if (clickedProperty->id == KisLayerPropertiesIcons::colorOverlay.id()) {
         // Open the properties dialog for the layer's fast color overlay mask.
         view->model()->setData(index, QVariant() /* unused */, KisNodeModel::LayerColorOverlayPropertiesRole);
@@ -693,6 +708,74 @@ bool NodeDelegate::Private::checkImmediateStasis(const QModelIndex &root, const 
     }
 
     return false;
+}
+
+bool NodeDelegate::Private::isIndexSoloed(const QModelIndex &index) const
+{
+    // Normalise to column 0 so the test is column-agnostic (clicks land on the
+    // visibility column, but the set is keyed on the node's column-0 index).
+    return soloedIndexes.contains(QPersistentModelIndex(index.sibling(index.row(), 0)));
+}
+
+void NodeDelegate::Private::toggleSoloOnIndex(const QModelIndex &index)
+{
+    const QModelIndex root = view->rootIndex();
+
+    // Key the solo set on the node's column-0 index so it matches both the
+    // recursive tree walk and the hotkey path (which use column 0).
+    const QModelIndex node = index.sibling(index.row(), 0);
+    if (!node.isValid()) return;
+
+    // We drive the same per-node visibility "stasis" used by shift+click soloing,
+    // but tracked as an additive set so multiple layers can be soloed at once.
+    KisBaseNode::PropertyList props = node.data(KisNodeModel::PropertiesRole).value<KisBaseNode::PropertyList>();
+    OptionalProperty clickedProperty = findVisibilityProperty(props);
+    if (!clickedProperty || !clickedProperty->canHaveStasis) return;
+
+    // Drop any entries invalidated by layer add/remove/reorder.
+    for (int i = soloedIndexes.size() - 1; i >= 0; --i) {
+        if (!soloedIndexes.at(i).isValid()) {
+            soloedIndexes.removeAt(i);
+        }
+    }
+
+    const bool sessionWasEmpty = soloedIndexes.isEmpty();
+    const QPersistentModelIndex pidx(node);
+    const int pos = soloedIndexes.indexOf(pidx);
+    if (pos >= 0) {
+        soloedIndexes.removeAt(pos); // un-solo this layer
+    } else {
+        soloedIndexes.append(pidx);  // solo this layer (in addition to any others)
+    }
+
+    if (soloedIndexes.isEmpty()) {
+        // The last solo was toggled off: restore the exact visibility every layer
+        // had before soloing began (NOT a blanket "make everything visible").
+        restorePropertyInStasisRecursive(root, clickedProperty);
+        shiftClickedIndexes.clear();
+        return;
+    }
+
+    // Build the union of "families" so a soloed group reveals its children and a
+    // soloed child keeps its parent groups visible (otherwise it can't render).
+    QList<QModelIndex> items;
+    for (const QPersistentModelIndex &p : soloedIndexes) {
+        if (!p.isValid()) continue;
+        const QModelIndex idx(p);
+        getParentsIndex(items, idx);
+        getChildrenIndex(items, idx);
+    }
+
+    // Record the genuine pre-solo state only when a session first begins; on later
+    // adds/removes we recompute visibility (Review) without clobbering the saved state.
+    const StasisOperation record = sessionWasEmpty ? StasisOperation::Record : StasisOperation::Review;
+    if (record == StasisOperation::Record) {
+        // Clear any stale stasis (e.g. from a prior shift+click eye solo) so the
+        // recorded "original" visibility is the real one.
+        restorePropertyInStasisRecursive(root, clickedProperty);
+    }
+    togglePropertyRecursive(root, clickedProperty, items, record, true /* include mode */);
+    shiftClickedIndexes.clear();
 }
 
 void NodeDelegate::Private::getParentsIndex(QList<QModelIndex> &items, const QModelIndex &index)
@@ -879,6 +962,59 @@ void NodeDelegate::drawVisibilityIcon(QPainter *p, const QStyleOptionViewItem &o
 // //     // p->restore();
 }
 
+QRect NodeDelegate::soloClickRect(const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    KisNodeViewColorScheme scm;
+
+    // The solo cell sits immediately to the side of the visibility "eye" cell,
+    // sharing its size, inside the (widened) visibility column.
+    QRect rc = visibilityClickRect(option, index);
+    if (option.direction == Qt::RightToLeft) {
+        rc.moveRight(rc.left() - scm.border());
+    } else {
+        rc.moveLeft(rc.right() + scm.border());
+    }
+
+    return rc;
+}
+
+void NodeDelegate::drawSoloIcon(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    KisNodeViewColorScheme scm;
+
+    QRect fitRect = soloClickRect(option, index);
+    // Shrink to icon rect, matching the visibility eye.
+    fitRect = kisGrowRect(fitRect, -(scm.visibilityMargin() + scm.border()));
+
+    const bool soloed = d->isIndexSoloed(index);
+    const bool sessionActive = !d->soloedIndexes.isEmpty();
+
+    p->save();
+
+    QFont f = option.font;
+    f.setBold(true);
+    f.setPixelSize(qMax(8, scm.visibilitySize() - 2));
+    p->setFont(f);
+
+    if (soloed) {
+        // Active solo: filled accent chip with contrasting glyph.
+        p->setRenderHint(QPainter::Antialiasing, true);
+        p->setPen(Qt::NoPen);
+        p->setBrush(d->view->palette().color(QPalette::Highlight));
+        p->drawRoundedRect(fitRect, 3, 3);
+        p->setPen(d->view->palette().color(QPalette::HighlightedText));
+    } else {
+        // Idle "S": faint like the other inactive icons; a touch more present
+        // while a solo session is live so it reads as a togglable column.
+        p->setOpacity(sessionActive ? 0.55 : 0.35);
+        p->setPen(d->view->palette().color(QPalette::Text));
+    }
+
+    p->drawText(fitRect, Qt::AlignCenter, i18nc("Single-letter abbreviation for the layer 'solo' toggle", "S"));
+
+    p->restore();
+}
+
 void NodeDelegate::drawDecoration(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     KisNodeViewColorScheme scm;
@@ -1061,6 +1197,13 @@ bool NodeDelegate::editorEvent(QEvent *event, QAbstractItemModel *model, const Q
 
         if (index.column() == NodeView::VISIBILITY_COL) {
 
+            const QRect soloRect = soloClickRect(option, index);
+            const bool soloClicked = soloRect.isValid() && soloRect.contains(mouseEvent->pos());
+            if (leftButton && soloClicked) {
+                d->toggleSoloOnIndex(index);
+                return true;
+            }
+
             const QRect visibilityRect = visibilityClickRect(option, index);
             const bool visibilityClicked = visibilityRect.isValid() && visibilityRect.contains(mouseEvent->pos());
             if (leftButton && visibilityClicked) {
@@ -1222,9 +1365,7 @@ void NodeDelegate::updateEditorGeometry(QWidget *widget, const QStyleOptionViewI
 }
 
 void NodeDelegate::toggleSolo(const QModelIndex &index) {
-    KisBaseNode::PropertyList props = index.data(KisNodeModel::PropertiesRole).value<KisBaseNode::PropertyList>();
-    OptionalProperty visibilityProperty = d->findVisibilityProperty(props);
-    d->toggleProperty(props, visibilityProperty, Qt::ShiftModifier, index);
+    d->toggleSoloOnIndex(index);
 }
 
 

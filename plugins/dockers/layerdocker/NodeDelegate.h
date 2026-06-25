@@ -69,6 +69,9 @@ private:
     QRect visibilityClickRect(const QStyleOptionViewItem &option, const QModelIndex &index) const;
     void drawVisibilityIcon(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const;
 
+    QRect soloClickRect(const QStyleOptionViewItem &option, const QModelIndex &index) const;
+    void drawSoloIcon(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const;
+
     QRect decorationClickRect(const QStyleOptionViewItem &option, const QModelIndex &index) const;
     void drawDecoration(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const;
     void drawExpandButton(QPainter *p, const QStyleOptionViewItem &option, const QModelIndex &index) const;

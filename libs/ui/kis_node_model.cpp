@@ -11,6 +11,7 @@
 #include <QMimeData>
 #include <QBuffer>
 #include <QPointer>
+#include <QGuiApplication>
 
 #include <KoColorSpaceConstants.h>
 #include <KoCompositeOpRegistry.h>
@@ -802,7 +803,6 @@ QStringList KisNodeModel::mimeTypes() const
 
 QMimeData * KisNodeModel::mimeData(const QModelIndexList &indexes) const
 {
-    bool hasLockedLayer = false;
     KisNodeList nodes;
     Q_FOREACH (const QModelIndex &idx, indexes) {
         // Although clone columns should not be selectable, make sure we only use column 0,
@@ -811,20 +811,29 @@ QMimeData * KisNodeModel::mimeData(const QModelIndexList &indexes) const
             continue;
         }
 
-        KisNodeSP node = nodeFromIndex(idx);
-
-        nodes << node;
-        hasLockedLayer |= !node->isEditable(false);
+        nodes << nodeFromIndex(idx);
     }
 
-    return KisMimeData::mimeForLayers(nodes, m_d->image, hasLockedLayer);
+    // Nuldrums: do NOT force a copy when a dragged layer is locked. Upstream turns
+    // a locked-layer drag into a forced duplicate (treating a stack move as "editing"
+    // the locked layer), which surprises users — they get a "Copy of X" instead of a
+    // reorder. Photoshop lets you freely reorder a locked layer; the lock only blocks
+    // pixel/transform edits. So pass forceCopy=false and let the normal move path run
+    // (Ctrl+drag still duplicates; cross-image drags still copy via sourceImage check).
+    return KisMimeData::mimeForLayers(nodes, m_d->image, /* forceCopy */ false);
 }
 
 bool KisNodeModel::dropMimeData(const QMimeData * data, Qt::DropAction action, int row, int column, const QModelIndex & parent)
 {
     Q_UNUSED(column);
 
-    bool copyNode = (action == Qt::CopyAction);
+    // Nuldrums: don't trust Qt's drop action for the copy/move decision. Under the
+    // Qt6 Wayland platform, internal layer drags get negotiated as a CopyAction
+    // even with no modifier held, so every reorder/drag-into-group duplicates the
+    // layer instead of moving it. Gate copy on the *actual* Ctrl modifier so plain
+    // drags always move and Ctrl+drag still duplicates, regardless of platform.
+    bool copyNode = (action == Qt::CopyAction) &&
+                    (QGuiApplication::keyboardModifiers() & Qt::ControlModifier);
 
     KisNodeDummy *parentDummy = 0;
     KisNodeDummy *aboveThisDummy = 0;
