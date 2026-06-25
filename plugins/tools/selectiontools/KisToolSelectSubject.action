@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ActionCollection version="2" name="Tools">
+  <Actions category="tool-shortcuts">
+      <text>Tool Shortcuts</text>
+    <Action name="KisToolSelectSubject">
+      <icon>select</icon>
+      <text>Subject Selection Tool (AI)</text>
+      <whatsThis>One-click subject selection using the local AI matte and segmentation models.</whatsThis>
+      <toolTip>Subject Selection Tool (AI)</toolTip>
+      <iconText>Subject Selection Tool (AI)</iconText>
+      <shortcut></shortcut>
+      <isCheckable>false</isCheckable>
+      <statusTip></statusTip>
+    </Action>
+  </Actions>
+</ActionCollection>
