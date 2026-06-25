@@ -96,6 +96,16 @@ void KisPresetDelegate::paint(QPainter * painter, const QStyleOptionViewItem & o
     qreal devicePixelRatioF = painter->device()->devicePixelRatioF();
 
     QRect paintRect = option.rect.adjusted(1, 1, -1, -1);
+
+    if (option.state & QStyle::State_Selected) {
+        // Paint the highlight as the tile *background*, before the preview, so the
+        // brush thumbnail stays readable on top (icon immune) instead of being
+        // washed out by an overlay. This keeps the accent in the background area
+        // only and works for bright theme colors. A border is added below as a
+        // guaranteed selection indicator for opaque previews.
+        painter->fillRect(option.rect, option.palette.highlight());
+    }
+
     if (!m_showText) {
         QImage previewHighDpi =
             KisResourceThumbnailCache::instance()->getImage(index,
@@ -151,11 +161,9 @@ void KisPresetDelegate::paint(QPainter * painter, const QStyleOptionViewItem & o
     }
 
     if (option.state & QStyle::State_Selected) {
-        painter->setCompositionMode(QPainter::CompositionMode_HardLight);
-        painter->setOpacity(1.0);
-        painter->fillRect(option.rect, option.palette.highlight());
-
-        // highlight is not strong enough to pick out preset. draw border around it.
+        // The highlight is drawn as the background above (under the preview); here
+        // we only stroke a border so the selection reads clearly without tinting
+        // the brush icon.
         painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
         painter->setPen(QPen(option.palette.highlight(), 4, Qt::SolidLine, Qt::FlatCap, Qt::MiterJoin));
         QRect selectedBorder = option.rect.adjusted(2 , 2, -2, -2); // constrict the rectangle so it doesn't bleed into other presets
