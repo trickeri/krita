@@ -285,8 +285,15 @@ namespace KisLsUtils
 
         quint8 rangeTable[256];
         for(int i = 0; i < 256; i ++) {
-            quint8 value = i * 100 / range;
-            rangeTable[i] = qMin(value, quint8(255));
+            // NOTE(Nuldrums): compute in int and clamp BEFORE narrowing to
+            // quint8. The original assigned (i * 100 / range) straight into a
+            // quint8, so for range < 100 any value >= 256*range/100 (e.g. >=128
+            // at range 50%) wrapped modulo 256 *before* the qMin clamp ran --
+            // turning the bright inner core of an Outer Glow into a dark notch
+            // hugging the layer edge (the ~1px "gap" between object and glow).
+            // Photoshop clamps, so the core stays opaque and there is no gap.
+            const int value = i * 100 / range;
+            rangeTable[i] = quint8(qMin(value, 255));
         }
 
         KisSequentialIterator dstIt(selection, applyRect);
