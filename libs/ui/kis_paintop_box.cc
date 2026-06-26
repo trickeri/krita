@@ -66,6 +66,7 @@
 #include "widgets/kis_workspace_chooser.h"
 #include "widgets/kis_paintop_list_widget.h"
 #include "kis_slider_spin_box.h"
+#include <QDomDocument>
 #include "KisAngleSelector.h"
 #include "kis_multipliers_double_slider_spinbox.h"
 #include "widgets/kis_cmb_composite.h"
@@ -251,6 +252,7 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
         KisDoubleSliderSpinBox* slOpacity;
         KisDoubleSliderSpinBox* slFlow;
         KisDoubleSliderSpinBox* slSize;
+        KisDoubleSliderSpinBox* slHardness;
         KisAngleSelector* slRotation;
         KisMultipliersDoubleSliderSpinBox* slPatternSize;
 
@@ -258,6 +260,7 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
             slOpacity     = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("opacity");
             slFlow        = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("flow");
             slSize        = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("size");
+            slHardness    = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("hardness");
             slRotation    = m_sliderChooser[i]->addWidget<KisAngleSelector>("rotation");
             slPatternSize = m_sliderChooser[i]->addWidget<KisMultipliersDoubleSliderSpinBox>("patternsize");
 
@@ -265,6 +268,8 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
                                           i18nc("{n} is the number value, % is the percent sign", "Opacity: {n}%"));
             KisSpinBoxI18nHelper::setText(slFlow,
                                           i18nc("{n} is the number value, % is the percent sign", "Flow: {n}%"));
+            KisSpinBoxI18nHelper::setText(slHardness,
+                                          i18nc("{n} is the number value, % is the percent sign", "Hardness: {n}%"));
             slSize->setPrefix(QString("%1 ").arg(i18n("Size:")));
             slRotation->setPrefix(QString("%1 ").arg(i18n("Rotation:")));
             slPatternSize->setPrefix(QString("%1 ").arg(i18n("Pattern Scale:")));
@@ -273,11 +278,13 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
             slOpacity     = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("opacity", i18n("Opacity:"));
             slFlow        = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("flow", i18n("Flow:"));
             slSize        = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("size", i18n("Size:"));
+            slHardness    = m_sliderChooser[i]->addWidget<KisDoubleSliderSpinBox>("hardness", i18n("Hardness:"));
             slRotation    = m_sliderChooser[i]->addWidget<KisAngleSelector>("rotation", i18n("Rotation:"));
             slPatternSize = m_sliderChooser[i]->addWidget<KisMultipliersDoubleSliderSpinBox>("patternsize", i18n("Pattern Scale:"));
 
             KisSpinBoxI18nHelper::setText(slOpacity, i18nc("{n} is the number value, % is the percent sign", "{n}%"));
             KisSpinBoxI18nHelper::setText(slFlow, i18nc("{n} is the number value, % is the percent sign", "{n}%"));
+            KisSpinBoxI18nHelper::setText(slHardness, i18nc("{n} is the number value, % is the percent sign", "{n}%"));
         }
 
         slOpacity->setRange(0, 100, 0);
@@ -303,6 +310,13 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
         slSize->setMinimumWidth(qMax(sliderWidth, slSize->sizeHint().width()));
         slSize->setFixedHeight(buttonsize);
         slSize->setBlockUpdateSignalOnDrag(true);
+
+        slHardness->setRange(0, 100, 0);
+        slHardness->setValue(100);
+        slHardness->setSingleStep(5);
+        slHardness->setMinimumWidth(qMax(sliderWidth, slHardness->sizeHint().width()));
+        slHardness->setFixedHeight(buttonsize);
+        slHardness->setBlockUpdateSignalOnDrag(true);
 
         slRotation->setFlipOptionsMode(KisAngleSelector::FlipOptionsMode_MenuButton);
         slRotation->setRange(-360.0, 360.0);
@@ -555,6 +569,12 @@ KisPaintopBox::KisPaintopBox(KisViewManager *viewManager, QWidget *parent, const
     connect(m_sliderChooser[4]->getWidget<KisDoubleSliderSpinBox>("size")                  , SIGNAL(valueChanged(qreal)), SLOT(slotSlider5Changed()));
     connect(m_sliderChooser[4]->getWidget<KisAngleSelector>("rotation")                    , SIGNAL(angleChanged(qreal)), SLOT(slotSlider5Changed()));
     connect(m_sliderChooser[4]->getWidget<KisMultipliersDoubleSliderSpinBox>("patternsize"), SIGNAL(valueChanged(qreal)), SLOT(slotSlider5Changed()));
+
+    // Hardness is handled by a dedicated slot (it rebuilds the brush mask, so it
+    // must NOT run on every opacity/size tweak the way sliderChanged() does).
+    for (int i = 0; i < 5; ++i) {
+        connect(m_sliderChooser[i]->getWidget<KisDoubleSliderSpinBox>("hardness"), SIGNAL(valueChanged(qreal)), SLOT(slotHardnessChanged()));
+    }
 
     connect(m_resourceProvider, SIGNAL(sigFGColorUsed(KoColor)), m_favoriteResourceManager, SLOT(slotAddRecentColor(KoColor)));
 
@@ -868,7 +888,7 @@ void KisPaintopBox::setSliderValue(const QString& sliderID, qreal value)
         KisDoubleSliderSpinBox* slider = m_sliderChooser[i]->getWidget<KisDoubleSliderSpinBox>(sliderID);
         KisSignalsBlocker b(slider);
 
-        if (sliderID == "opacity" || sliderID == "flow") { // opacity and flows UI stored at 0-100%
+        if (sliderID == "opacity" || sliderID == "flow" || sliderID == "hardness") { // opacity/flow/hardness UI stored at 0-100%
             slider->setValue(value*100);
         } else {
             slider->setValue(value); // brush size
@@ -1038,6 +1058,9 @@ void KisPaintopBox::slotCanvasResourceChanged(int key, const QVariant &value)
              */
             m_presetsChooserPopup->canvasResourceChanged(preset);
             m_presetsEditor->currentPresetChanged(preset);
+
+            // refresh the toolbar Hardness slider to the new preset's fade
+            updateHardnessSlider();
         }
 
         if (key == KoCanvasResource::CurrentCompositeOp) {
@@ -1269,6 +1292,91 @@ void KisPaintopBox::slotSlider5Changed()
     sliderChanged(4);
 }
 
+namespace {
+// The auto-brush mask generator (round/rectangular brush) lives in the preset's
+// "brush_definition" XML as <Brush type="auto_brush"><MaskGenerator hfade=".." vfade=".."/></Brush>.
+// Returns the MaskGenerator element (null if the current brush isn't an auto-brush).
+QDomElement autoBrushMaskElement(QDomDocument &doc, const QString &brushDefinition)
+{
+    if (brushDefinition.isEmpty() || !doc.setContent(brushDefinition)) {
+        return QDomElement();
+    }
+    QDomElement brushElt = doc.firstChildElement("Brush");
+    if (brushElt.isNull() || brushElt.attribute("type") != "auto_brush") {
+        return QDomElement();
+    }
+    return brushElt.firstChildElement("MaskGenerator");
+}
+}
+
+void KisPaintopBox::slotHardnessChanged()
+{
+    KisDoubleSliderSpinBox *slider = qobject_cast<KisDoubleSliderSpinBox*>(sender());
+    if (!slider) return;
+
+    const qreal hardness = slider->value() / 100.0;
+    setBrushHardness(hardness);
+
+    // keep every chooser's hardness widget in sync (signals are blocked inside)
+    setSliderValue("hardness", hardness);
+}
+
+void KisPaintopBox::setBrushHardness(qreal hardness)
+{
+    if (!m_presetsEnabled) return;
+
+    KisPaintOpPresetSP preset = m_resourceProvider->currentPreset();
+    if (!preset) return;
+
+    KisPaintOpSettingsSP settings = preset->settings();
+    if (!settings) return;
+
+    QDomDocument doc;
+    QDomElement maskElt = autoBrushMaskElement(doc, settings->getString("brush_definition"));
+    if (maskElt.isNull()) return;
+
+    // Photoshop-style hardness maps directly to Krita's "fade": fade is the size
+    // of the solid opaque core (fade=1 hard edge, fade=0 fades from the centre).
+    const qreal fade = qBound(0.0, hardness, 1.0);
+    maskElt.setAttribute("hfade", QString::number(fade));
+    maskElt.setAttribute("vfade", QString::number(fade));
+
+    // Temporary, in-memory override of the active preset only: it marks the preset
+    // dirty (not saved to disk), and switching presets reloads the saved value.
+    // The postponer fires the settings-changed update so the next stroke rebuilds
+    // the brush mask with the new fade.
+    KisPaintOpPreset::UpdatedPostponer postponer(preset);
+    settings->setProperty("brush_definition", doc.toString());
+}
+
+void KisPaintopBox::updateHardnessSlider()
+{
+    KisPaintOpPresetSP preset = m_resourceProvider->currentPreset();
+
+    bool isAutoBrush = false;
+    qreal hardness = 1.0;
+
+    if (preset && preset->settings()) {
+        QDomDocument doc;
+        QDomElement maskElt = autoBrushMaskElement(doc, preset->settings()->getString("brush_definition"));
+        if (!maskElt.isNull()) {
+            isAutoBrush = true;
+            const qreal fade = maskElt.attribute("hfade", "0.0").toDouble();
+            hardness = qBound(0.0, fade, 1.0);
+        }
+    }
+
+    // Hardness only applies to round/auto brushes; grey it out otherwise.
+    for (int i = 0; i < 5; ++i) {
+        KisDoubleSliderSpinBox *slider = m_sliderChooser[i]->getWidget<KisDoubleSliderSpinBox>("hardness");
+        if (slider) slider->setEnabled(isAutoBrush);
+    }
+
+    if (isAutoBrush) {
+        setSliderValue("hardness", hardness);
+    }
+}
+
 void KisPaintopBox::slotToolChanged(KoCanvasController* canvas)
 {
     Q_UNUSED(canvas);
@@ -1440,6 +1548,9 @@ void KisPaintopBox::slotGuiChangedCurrentPreset() // Called only when UI is chan
 
     // we should also update the preset strip to update the status of the "dirty" mark
     m_presetsEditor->resourceSelected(m_resourceProvider->currentPreset());
+
+    // a brush-editor edit may have changed the fade -> refresh the toolbar slider
+    updateHardnessSlider();
 
     // TODO!!!!!!!!
     //m_presetsPopup->updateViewSettings();

@@ -2053,6 +2053,9 @@ QString KisConfig::toolbarSlider(int sliderNumber, bool defaultValue) const
     if (sliderNumber == 2) {
         def = "size";
     }
+    if (sliderNumber == 3) {
+        def = "hardness";
+    }
     return (defaultValue ? def : m_cfg.readEntry(QString("toolbarslider_%1").arg(sliderNumber), def));
 }
 

@@ -136,6 +136,14 @@ private:
     void sliderChanged(int n);
     void findDefaultPresets();
 
+    /// Live "Hardness" toolbar slider: a temporary override of the current
+    /// auto-brush's edge fade. Maps directly to Krita's "fade" (0..1; 1 = hard
+    /// edge, 0 = fades from the centre). Writes the in-memory preset only, so
+    /// switching presets discards it; updateHardnessSlider() re-reads the active
+    /// preset's value and disables the slider for non-round brushes.
+    void setBrushHardness(qreal hardness);
+    void updateHardnessSlider();
+
 private Q_SLOTS:
 
     void slotSetupDefaultPreset();
@@ -150,6 +158,7 @@ private Q_SLOTS:
     void slotSlider3Changed();
     void slotSlider4Changed();
     void slotSlider5Changed();
+    void slotHardnessChanged();
     void slotToolChanged(KoCanvasController* canvas);
     void slotPreviousFavoritePreset();
     void slotNextFavoritePreset();

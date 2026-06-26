@@ -2,7 +2,7 @@
 <kpartgui xmlns="http://www.kde.org/standards/kxmlgui/1.0"
 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 name="Krita"
-version="543"
+version="544"
 xsi:schemaLocation="http://www.kde.org/standards/kxmlgui/1.0  http://www.kde.org/standards/kxmlgui/1.0/kxmlgui.xsd">
   <MenuBar>
     <Menu name="file">
@@ -450,6 +450,7 @@ xsi:schemaLocation="http://www.kde.org/standards/kxmlgui/1.0  http://www.kde.org
     <Action name="composite_actions"/>
     <Action name="brushslider1"/>
     <Action name="brushslider2"/>
+    <Action name="brushslider3"/>
     <Action name="mirror_actions"/>
     <Action name="expanding_spacer_1"/>
     <Action name="select_layout"/>
