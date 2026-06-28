@@ -566,25 +566,26 @@ void NodeDelegate::Private::toggleProperty(KisBaseNode::PropertyList &props, con
         togglePropertyRecursive(root, clickedProperty, items, record, mode);
 
     } else {
-        // If we have properties in stasis, we need to cancel stasis to avoid overriding
-        // values in stasis.
-        // IMPORTANT -- we also need to check the first row of nodes to determine
-        // if a stasis is currently active in some cases.
-        const bool hasPropInStasis = (shiftClickedIndexes.count() > 0 || checkImmediateStasis(root, clickedProperty));
-        if (clickedProperty->canHaveStasis && hasPropInStasis) {
-            shiftClickedIndexes.clear();
+        // A plain click on the eye ALWAYS toggles just this layer's visibility.
+        //
+        // If a solo session (our additive "S" column, or an upstream shift+click
+        // solo) has parked other layers in stasis, end that session here WITHOUT
+        // reverting: clear every node's stasis override but keep whatever is
+        // currently shown, so the manual toggle sticks and no node is left
+        // stranded in stasis. (That stranding is what made eye-clicks feel dead —
+        // upstream instead swallowed the click to restore pre-solo state.)
+        // Restoring the genuine pre-solo visibility is the job of toggling the
+        // last "S" off (see toggleSoloOnIndex), not of an eye click.
+        shiftClickedIndexes.clear();
 
-            restorePropertyInStasisRecursive(root, clickedProperty);
-        } else {
-            shiftClickedIndexes.clear();
-
+        if (clickedProperty->canHaveStasis) {
             resetPropertyStateRecursive(root, clickedProperty);
-
-            OptionalProperty prop = findProperty(props, clickedProperty);
-            prop->state = !prop->state.toBool();
-            prop->isInStasis = false;
-            view->model()->setData(index, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
         }
+
+        OptionalProperty prop = findProperty(props, clickedProperty);
+        prop->state = !prop->state.toBool();
+        prop->isInStasis = false;
+        view->model()->setData(index, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
     }
 }
 
