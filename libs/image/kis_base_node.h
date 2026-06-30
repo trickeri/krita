@@ -383,6 +383,28 @@ public:
     virtual bool visible(bool recursive = false) const;
 
     /**
+     * Return the visibility that should be *persisted* to file. While a node
+     * is in visibility "stasis" (e.g. during a solo session) its live
+     * visible() is the temporary soloed value and the real, user-intended
+     * visibility is parked in the property's stateInStasis. Saving the live
+     * value would bake the transient solo state into the .kra (and lose the
+     * original on reload, since stasis is runtime-only). KRA serialization
+     * uses this instead so the file always reflects the true visibility while
+     * the editor keeps showing the solo view.
+     */
+    bool persistentVisible() const;
+
+    /**
+     * Drop any visibility "stasis" (solo) parked on this node so that the
+     * node's live visible() becomes authoritative again. Called when visibility
+     * is changed from OUTSIDE the solo system (e.g. a libkis/scripting
+     * setVisible), so a direct visibility edit supersedes a stale solo record
+     * instead of letting persistentVisible() resurrect the old value. NOT called
+     * from the internal setVisible() path, which the solo machinery itself uses.
+     */
+    void clearVisibilityStasis();
+
+    /**
      * Set the visible status of this node. Visible nodes are active
      * in the graph (except for selections masks which can be active
      * while hidden), that is to say, they are taken into account

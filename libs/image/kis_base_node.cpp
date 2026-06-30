@@ -47,6 +47,7 @@ struct Q_DECL_HIDDEN KisBaseNode::Private
 
     Private(const Private &rhs)
         : compositeOp(rhs.compositeOp),
+          hack_visible(rhs.hack_visible),
           id(QUuid::createUuid()),
           opacityProperty(new KisDefaultBounds(rhs.image), &properties, OPACITY_OPAQUE_U8),
           collapsed(rhs.collapsed),
@@ -248,6 +249,19 @@ bool KisBaseNode::visible(bool recursive) const
 
     return recursive && isVisible && parentNode ?
         parentNode->visible(recursive) : isVisible;
+}
+
+bool KisBaseNode::persistentVisible() const
+{
+    // While in visibility stasis (solo session) the live value is the soloed
+    // state; the real user visibility is parked in stateInStasis. Persist that.
+    return m_d->hack_visible.isInStasis ? m_d->hack_visible.stateInStasis
+                                        : visible();
+}
+
+void KisBaseNode::clearVisibilityStasis()
+{
+    m_d->hack_visible.isInStasis = false;
 }
 
 void KisBaseNode::setVisible(bool visible, bool loading)

@@ -537,6 +537,10 @@ bool Node::hasKeyframeAtTime(int frameNumber)
 void Node::setVisible(bool visible)
 {
     if (!d->node) return;
+    // A scripting/bridge visibility change is an explicit edit: drop any solo
+    // "stasis" so it supersedes a stale pre-solo record (otherwise a save would
+    // persist the old value via persistentVisible()).
+    d->node->clearVisibilityStasis();
     d->node->setVisible(visible);
 }
 
