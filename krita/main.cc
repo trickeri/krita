@@ -244,6 +244,19 @@ extern "C" MAIN_EXPORT int MAIN_FN(int argc, char **argv)
 
     // A per-user unique string, without /, because QLocalServer cannot use names with a / in it
     QString key = "Krita5" + QStandardPaths::writableLocation(QStandardPaths::HomeLocation).replace("/", "_");
+    // Deliberately-separate instances (multi-window agent control, nuldrums): a
+    // distinct $KRITA_INSTANCE_KEY — or $NULPAINT_PORT, which `nulpaint launch
+    // --port` sets — gives this process its own QtSingleApplication identity, so
+    // it won't fold its args into an already-running Krita and instead opens a
+    // real second window with its own in-process nulpaint bridge. With neither
+    // env set, the key is unchanged => normal single-instance behavior.
+    QByteArray instanceKey = qgetenv("KRITA_INSTANCE_KEY");
+    if (instanceKey.isEmpty()) {
+        instanceKey = qgetenv("NULPAINT_PORT");
+    }
+    if (!instanceKey.isEmpty()) {
+        key += "_" + QString::fromLocal8Bit(instanceKey);
+    }
     key = key.replace(":", "_").replace("\\","_");
 
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts, true);

@@ -132,6 +132,15 @@ protected:
     virtual void updateChannelControls() = 0;
     virtual KisPropertiesConfigurationSP getDefaultConfiguration() = 0;
 
+    /// Virtual-channel index mapped to the horizontal (X) axis of the curve.
+    /// Per-channel: the active channel. Cross-channel: the driver channel.
+    virtual int horizontalChannel() const;
+    /// True when the given axis represents the Hue virtual channel (→ paint a
+    /// hue spectrum instead of a grayscale ramp).
+    bool axisIsHue(Qt::Orientation orient) const;
+    /// (Re)build the horizontal + vertical axis gradient strips.
+    void updateGradients();
+
     inline QPixmap getHistogram();
     inline QPixmap createGradient(Qt::Orientation orient /*, int invert (not used now) */);
 

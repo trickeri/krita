@@ -26,6 +26,7 @@
 #include <QMdiArea>
 #include <QMdiSubWindow>
 #include <QMutex>
+#include <QHash>
 #include <QMutexLocker>
 #include <QPointer>
 #include <KisSignalMapper.h>
@@ -309,6 +310,14 @@ public:
     KConfigGroup windowStateConfig;
 
     QUuid workspaceBorrowedBy;
+
+    // Per-document workspace memory: the workspace last applied while each document
+    // was active, re-applied automatically when that document is switched back to
+    // (e.g. bounce between an animation doc and a plain image-editor doc). Session-
+    // scoped; keyed by document, pruned when a document is destroyed.
+    QHash<KisDocument*, QString> documentWorkspaces;
+    QString currentWorkspaceName;
+    bool applyingDocumentWorkspace {false};
 
     KateCommandBar *commandBar {nullptr};
 
@@ -2059,6 +2068,20 @@ bool KisMainWindow::restoreWorkspace(KoResourceSP res)
 
     d->viewManager->notifyWorkspaceLoaded();
 
+    // Remember this workspace for the active document so switching back to it restores
+    // this layout. Skip while WE'RE re-applying it on a document switch (no self-store
+    // needed, and the doc is already mapped to this name).
+    d->currentWorkspaceName = workspace->name();
+    if (!d->applyingDocumentWorkspace && activeKisView() && activeKisView()->document()) {
+        KisDocument *doc = activeKisView()->document();
+        if (!d->documentWorkspaces.contains(doc)) {
+            connect(doc, &QObject::destroyed, this, [this, doc]() {
+                d->documentWorkspaces.remove(doc);   // pointer used only as a key
+            });
+        }
+        d->documentWorkspaces.insert(doc, workspace->name());
+    }
+
     return success;
 }
 
@@ -2589,6 +2612,22 @@ void KisMainWindow::subWindowActivated()
 
             }
             menu->actions().last()->deleteLater();
+        }
+    }
+
+    // Re-apply the workspace this document last used (per-document workspace memory).
+    KisView *curView = activeKisView();
+    if (curView && curView->document()) {
+        auto it = d->documentWorkspaces.constFind(curView->document());
+        if (it != d->documentWorkspaces.constEnd() && *it != d->currentWorkspaceName) {
+            KoResourceServer<KisWorkspaceResource> *rserver =
+                KisResourceServerProvider::instance()->workspaceServer();
+            KisWorkspaceResourceSP ws = rserver->resource("", "", *it);
+            if (ws) {
+                d->applyingDocumentWorkspace = true;
+                restoreWorkspace(ws);
+                d->applyingDocumentWorkspace = false;
+            }
         }
     }
 

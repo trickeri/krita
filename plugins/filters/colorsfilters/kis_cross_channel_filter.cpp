@@ -319,8 +319,20 @@ void KisCrossChannelConfigWidget::slotDriverChannelSelected(int index)
     KIS_SAFE_ASSERT_RECOVER_RETURN(0 <= channel && channel < m_virtualChannels.size());
     m_driverChannels[m_activeVChannel] = channel;
 
+    // The X axis now maps to a different driver — repaint the spectrum/ramp
+    // behind the curve and the axis gradient strips.
+    updateGradients();
+
     updateChannelControls();
     Q_EMIT sigConfigurationItemChanged();
+}
+
+int KisCrossChannelConfigWidget::horizontalChannel() const
+{
+    if (m_activeVChannel >= 0 && m_activeVChannel < m_driverChannels.size()) {
+        return m_driverChannels[m_activeVChannel];
+    }
+    return KisMultiChannelConfigWidget::horizontalChannel();
 }
 
 // KisCrossChannelFilter

@@ -1,0 +1,9 @@
+{
+    "Id": "Green Heal Op",
+    "Type": "Service",
+    "X-KDE-Library": "kritagreenhealpaintop",
+    "X-KDE-ServiceTypes": [
+        "Krita/Paintop"
+    ],
+    "X-Krita-Version": "28"
+}

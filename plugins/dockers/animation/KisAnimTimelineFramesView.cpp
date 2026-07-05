@@ -21,6 +21,7 @@
 #include <QScroller>
 #include <QDrag>
 #include <QKeySequence>
+#include <QKeyEvent>
 #include <QInputDialog>
 #include <QClipboard>
 #include <QMimeData>
@@ -895,6 +896,41 @@ bool KisAnimTimelineFramesView::viewportEvent(QEvent *event)
     */
 
     return QTableView::viewportEvent(event);
+}
+
+bool KisAnimTimelineFramesView::event(QEvent *event)
+{
+    /**
+     * Claim Ctrl+L for the loop-bracket (playback range) action while the
+     * timeline frames view has focus. Ctrl+L is a *window*-level shortcut for
+     * the Levels filter, so without this the two would be ambiguous whenever
+     * the timeline is focused. Accepting the ShortcutOverride here tells Qt to
+     * skip the global shortcut and deliver the key as a normal keyPressEvent to
+     * this widget instead -- making the binding context-sensitive to the
+     * timeline. The actual work is done in keyPressEvent().
+     */
+    if (event->type() == QEvent::ShortcutOverride) {
+        QKeyEvent *ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_L && ke->modifiers() == Qt::ControlModifier) {
+            event->accept();
+            return true;
+        }
+    }
+    return QTableView::event(event);
+}
+
+void KisAnimTimelineFramesView::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_L && event->modifiers() == Qt::ControlModifier) {
+        // Set the playback (loop) range to the currently selected frames.
+        // No-op with an empty selection so we never push a bogus range.
+        if (selectionModel()->hasSelection()) {
+            slotUpdatePlaybackRange();
+        }
+        event->accept();
+        return;
+    }
+    QTableView::keyPressEvent(event);
 }
 
 void KisAnimTimelineFramesView::mousePressEvent(QMouseEvent *event)

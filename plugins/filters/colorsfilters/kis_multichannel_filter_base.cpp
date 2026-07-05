@@ -420,8 +420,7 @@ void KisMultiChannelConfigWidget::init() {
     connect((QObject*)(m_page->resetButton), SIGNAL(clicked()), this, SLOT(resetCurve()));
 
     // create the horizontal and vertical gradient labels
-    m_page->hgradient->setPixmap(createGradient(Qt::Horizontal));
-    m_page->vgradient->setPixmap(createGradient(Qt::Vertical));
+    updateGradients();
 
     // init histogram calculator
     const KoColorSpace *targetColorSpace = m_dev->compositionSourceColorSpace();
@@ -562,27 +561,46 @@ int KisMultiChannelConfigWidget::findDefaultVirtualChannelSelection()
     return 0;
 }
 
+int KisMultiChannelConfigWidget::horizontalChannel() const
+{
+    // Per-channel: the X axis is the input value of the active channel.
+    // (Cross-channel overrides this to return the driver channel.)
+    return m_activeVChannel;
+}
+
+bool KisMultiChannelConfigWidget::axisIsHue(Qt::Orientation orient) const
+{
+    const int channel = (orient == Qt::Horizontal) ? horizontalChannel() : m_activeVChannel;
+    return channel >= 0 && channel < m_virtualChannels.size()
+        && m_virtualChannels[channel].type() == VirtualChannelInfo::HUE;
+}
+
+void KisMultiChannelConfigWidget::updateGradients()
+{
+    m_page->hgradient->setPixmap(createGradient(Qt::Horizontal));
+    m_page->vgradient->setPixmap(createGradient(Qt::Vertical));
+    // The field behind the curve also depends on the X-axis channel (hue
+    // spectrum vs. histogram), so refresh it here too.
+    m_page->curveWidget->setPixmap(getHistogram());
+}
+
 inline QPixmap KisMultiChannelConfigWidget::createGradient(Qt::Orientation orient /*, int invert (not used yet) */)
 {
-    int width;
-    int height;
-    int *i, inc, col;
-    int x = 0, y = 0;
-
-    if (orient == Qt::Horizontal) {
-        i = &x; inc = 1; col = 0;
-        width = 256; height = 1;
-    } else {
-        i = &y; inc = -1; col = 255;
-        width = 1; height = 256;
-    }
+    const bool hue = axisIsHue(orient);
+    const bool horizontal = orient == Qt::Horizontal;
+    const int width = horizontal ? 256 : 1;
+    const int height = horizontal ? 1 : 256;
 
     QPixmap gradientpix(width, height);
     QPainter p(&gradientpix);
-    p.setPen(QPen(QColor(0, 0, 0), 1, Qt::SolidLine));
-    for (; *i < 256; (*i)++, col += inc) {
-        p.setPen(QColor(col, col, col));
-        p.drawPoint(x, y);
+    // j runs along the axis; for the vertical strip the origin is at the top,
+    // so high values sit at the top (matching the curve's Y axis).
+    for (int j = 0; j < 256; ++j) {
+        const int val = horizontal ? j : 255 - j;
+        QColor c = hue ? QColor::fromHsv((val * 359) / 255, 255, 255)
+                       : QColor(val, val, val);
+        p.setPen(c);
+        p.drawPoint(horizontal ? j : 0, horizontal ? 0 : j);
     }
     return gradientpix;
 }
@@ -605,7 +623,18 @@ inline QPixmap KisMultiChannelConfigWidget::getHistogram()
 
     QPalette appPalette = QApplication::palette();
 
-    pix.fill(QColor(appPalette.color(QPalette::Base)));
+    if (axisIsHue(Qt::Horizontal)) {
+        // Paint the hue spectrum behind the curve so the X axis reads as the
+        // colour wheel (red→…→magenta→red, wrapping at the edges). Muted so the
+        // grid + curve stay legible on top.
+        QPainter bg(&pix);
+        for (int x = 0; x < 256; ++x) {
+            bg.setPen(QColor::fromHsv((x * 359) / 255, 150, 205));
+            bg.drawLine(x, 0, x, height);
+        }
+    } else {
+        pix.fill(QColor(appPalette.color(QPalette::Base)));
+    }
 
     QPainter p(&pix);
     p.setPen(QColor(appPalette.color(QPalette::Text)));
@@ -663,7 +692,7 @@ void KisMultiChannelConfigWidget::setActiveChannel(int ch)
 
     m_activeVChannel = ch;
     m_page->curveWidget->setCurve(m_curves[m_activeVChannel]);
-    m_page->curveWidget->setPixmap(getHistogram());
+    updateGradients();   // sets both axis strips + the field background
 
     const int index = m_page->cmbChannel->findData(m_activeVChannel);
     m_page->cmbChannel->setCurrentIndex(index);

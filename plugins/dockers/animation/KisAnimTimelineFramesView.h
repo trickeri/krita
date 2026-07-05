@@ -133,6 +133,8 @@ public Q_SLOTS:
 
 protected:
     bool viewportEvent(QEvent *event) override;
+    bool event(QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;

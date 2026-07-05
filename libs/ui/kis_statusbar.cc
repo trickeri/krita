@@ -22,6 +22,9 @@
 #include <KoViewConverter.h>
 #include <QHBoxLayout>
 #include <QEvent>
+#include <QProcess>
+#include <QDir>
+#include <QFile>
 
 #include <KisUsageLogger.h>
 
@@ -106,6 +109,30 @@ void KisStatusBar::setup()
             connect(btn, &QToolButton::clicked, selMgr, a.slot);
             selActionsLayout->addWidget(btn);
         }
+
+        // NulPaint "Green-eat": recolour leftover chroma-green edge fringe inside the
+        // selection from the nearest clean colour (alpha untouched) — for cleaning the
+        // Kling sprite animations. The cv2 math + bridge pixel round-trip live in the
+        // external `nulpaint` CLI, so we shell it DETACHED (non-blocking): the CLI calls
+        // back over the loopback bridge for get/set-region, which are serviced on this
+        // same GUI thread — a blocking wait here would deadlock. Runs from $HOME to dodge
+        // the CLI's cwd-shadow pitfall.
+        {
+            QToolButton *ge = new QToolButton(m_selectionActions);
+            ge->setText(i18n("Green-eat"));
+            ge->setToolButtonStyle(Qt::ToolButtonTextOnly);
+            ge->setToolTip(i18n("Green-eat: remove leftover chroma-green fringe inside "
+                                "the selection (recolours from nearest clean pixel, keeps alpha)"));
+            ge->setAutoRaise(true);
+            connect(ge, &QToolButton::clicked, this, []() {
+                QString bin = QDir::homePath() + QLatin1String("/.local/bin/nulpaint");
+                if (!QFile::exists(bin)) bin = QLatin1String("nulpaint");
+                QProcess::startDetached(bin, QStringList() << QLatin1String("despill-selection"),
+                                        QDir::homePath());
+            });
+            selActionsLayout->addWidget(ge);
+        }
+
         addStatusBarItem(m_selectionActions);
         m_selectionActions->setVisible(false);
 
