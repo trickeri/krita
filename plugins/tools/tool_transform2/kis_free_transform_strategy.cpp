@@ -626,7 +626,9 @@ void KisFreeTransformStrategy::continuePrimaryAction(const QPointF &mousePos,
             break;
         }
 
-        if (shiftModifierActive ||  m_d->currentArgs.keepAspectRatio()) {
+        // nuldrums: proportional scaling is the DEFAULT (modern-PS parity);
+        // holding Shift frees the aspect ratio. "Keep aspect ratio" still hard-locks.
+        if (!shiftModifierActive ||  m_d->currentArgs.keepAspectRatio()) {
             qreal aspectRatio = m_d->clickArgs.scaleX() / m_d->clickArgs.scaleY();
             m_d->currentArgs.setScaleX(aspectRatio * result.scale);
         }
@@ -679,7 +681,8 @@ void KisFreeTransformStrategy::continuePrimaryAction(const QPointF &mousePos,
             break;
         }
 
-        if (shiftModifierActive  ||  m_d->currentArgs.keepAspectRatio()) {
+        // nuldrums: proportional by default; Shift frees the aspect ratio.
+        if (!shiftModifierActive  ||  m_d->currentArgs.keepAspectRatio()) {
             qreal aspectRatio = m_d->clickArgs.scaleY() / m_d->clickArgs.scaleX();
             m_d->currentArgs.setScaleY(aspectRatio * result.scale);
         }
@@ -720,7 +723,8 @@ void KisFreeTransformStrategy::continuePrimaryAction(const QPointF &mousePos,
         QPointF staticPointInView = m_d->clickTransform.map(staticPoint);
         QPointF movingPointInView = mousePos;
 
-        if (shiftModifierActive  ||  m_d->currentArgs.keepAspectRatio()) {
+        // nuldrums: proportional by default; Shift frees the aspect ratio.
+        if (!shiftModifierActive  ||  m_d->currentArgs.keepAspectRatio()) {
             QPointF refDiff = m_d->clickTransform.map(movingPoint) - staticPointInView;
             QPointF realDiff = mousePos - staticPointInView;
             realDiff = kisProjectOnVector(refDiff, realDiff);
