@@ -37,6 +37,9 @@
 typedef KisBaseNode::Property* OptionalProperty;
 
 #include <kis_base_node.h>
+#include <kis_node.h>
+#include <kis_image.h>
+#include "kis_node_filter_proxy_model.h"
 
 class NodeDelegate::Private
 {
@@ -76,11 +79,18 @@ public:
     OptionalProperty findVisibilityProperty(KisBaseNode::PropertyList &props) const;
 
     void toggleProperty(KisBaseNode::PropertyList &props, const OptionalProperty clickedProperty, const Qt::KeyboardModifiers modifier, const QModelIndex &index);
-    void togglePropertyRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, const QList<QModelIndex> &items, StasisOperation record, bool mode);
+    void togglePropertyRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, const QList<QModelIndex> &items, StasisOperation record, bool mode, bool defer = false);
 
     bool stasisIsDirty(const QModelIndex &root, const OptionalProperty &clickedProperty, bool on = false, bool off = false);
-    void resetPropertyStateRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty);
-    void restorePropertyInStasisRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty);
+    void resetPropertyStateRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, bool defer = false);
+    void restorePropertyInStasisRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, bool defer = false);
+
+    // Solo batching: apply a node's property list either the normal way (model->setData,
+    // which triggers a per-node recompose) or — when `defer` — straight onto the node with
+    // setSectionModelProperties (state + stasis, NO recompose), so a mass solo flip can do
+    // ONE image refresh at the end instead of dozens of serialized full-stack recomposites.
+    KisNodeSP soloNodeForIndex(const QModelIndex &idx) const;
+    void applySoloProps(const QModelIndex &idx, const KisBaseNode::PropertyList &props, bool defer);
 
     bool checkImmediateStasis(const QModelIndex &root, const OptionalProperty &clickedProperty);
 
@@ -589,7 +599,34 @@ void NodeDelegate::Private::toggleProperty(KisBaseNode::PropertyList &props, con
     }
 }
 
-void NodeDelegate::Private::togglePropertyRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, const QList<QModelIndex> &items, StasisOperation record, bool mode)
+KisNodeSP NodeDelegate::Private::soloNodeForIndex(const QModelIndex &idx) const
+{
+    QAbstractItemModel *model = view->model();
+    if (KisNodeFilterProxyModel *proxy = qobject_cast<KisNodeFilterProxyModel*>(model)) {
+        return proxy->nodeFromIndex(idx);
+    }
+    if (KisNodeModel *nodeModel = qobject_cast<KisNodeModel*>(model)) {
+        return nodeModel->nodeFromIndex(idx);
+    }
+    return KisNodeSP();
+}
+
+void NodeDelegate::Private::applySoloProps(const QModelIndex &idx, const KisBaseNode::PropertyList &props, bool defer)
+{
+    if (defer) {
+        // Apply state + stasis straight onto the node. setSectionModelProperties does
+        // NOT recompose (only KisNodePropertyListCommand::doUpdate does) — the caller
+        // issues one refreshGraphAsync() after the whole batch. nodeChanged still fires,
+        // so the docker's eye icons stay in sync.
+        if (KisNodeSP node = soloNodeForIndex(idx)) {
+            node->setSectionModelProperties(props);
+        }
+    } else {
+        view->model()->setData(idx, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
+    }
+}
+
+void NodeDelegate::Private::togglePropertyRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, const QList<QModelIndex> &items, StasisOperation record, bool mode, bool defer)
 {
     int rowCount = view->model()->rowCount(root);
 
@@ -618,9 +655,9 @@ void NodeDelegate::Private::togglePropertyRecursive(const QModelIndex &root, con
             prop->isInStasis = false;
         }
 
-        view->model()->setData(idx, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
+        applySoloProps(idx, props, defer);
 
-        togglePropertyRecursive(idx,clickedProperty, items, record, mode);
+        togglePropertyRecursive(idx,clickedProperty, items, record, mode, defer);
     }
 }
 
@@ -653,7 +690,7 @@ bool NodeDelegate::Private::stasisIsDirty(const QModelIndex &root, const Optiona
     return result;
 }
 
-void NodeDelegate::Private::resetPropertyStateRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty)
+void NodeDelegate::Private::resetPropertyStateRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, bool defer)
 {
     if (!clickedProperty->canHaveStasis) return;
     int rowCount = view->model()->rowCount(root);
@@ -666,13 +703,13 @@ void NodeDelegate::Private::resetPropertyStateRecursive(const QModelIndex &root,
 
         if (!prop) continue;
         prop->isInStasis = false;
-        view->model()->setData(idx, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
+        applySoloProps(idx, props, defer);
 
-        resetPropertyStateRecursive(idx,clickedProperty);
+        resetPropertyStateRecursive(idx,clickedProperty, defer);
     }
 }
 
-void NodeDelegate::Private::restorePropertyInStasisRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty)
+void NodeDelegate::Private::restorePropertyInStasisRecursive(const QModelIndex &root, const OptionalProperty &clickedProperty, bool defer)
 {
     if (!clickedProperty->canHaveStasis) return;
     int rowCount = view->model()->rowCount(root);
@@ -687,9 +724,9 @@ void NodeDelegate::Private::restorePropertyInStasisRecursive(const QModelIndex &
             prop->state = QVariant(prop->stateInStasis);
         }
 
-        view->model()->setData(idx, QVariant::fromValue(props), KisNodeModel::PropertiesRole);
+        applySoloProps(idx, props, defer);
 
-        restorePropertyInStasisRecursive(idx, clickedProperty);
+        restorePropertyInStasisRecursive(idx, clickedProperty, defer);
     }
 }
 
@@ -749,33 +786,48 @@ void NodeDelegate::Private::toggleSoloOnIndex(const QModelIndex &index)
         soloedIndexes.append(pidx);  // solo this layer (in addition to any others)
     }
 
+    // A solo click flips the visibility of EVERY layer at once. Applying those one by
+    // one through model->setData recomposites the whole stack per layer — on a doc with
+    // dozens of layers that's a many-second "slideshow". Instead we set them all straight
+    // onto the nodes (setSectionModelProperties: state + stasis, no recompose) under a
+    // barrier lock, then issue ONE refreshGraphAsync() so the canvas recomposites once.
+    // `image` is null for a detached/edge case → falls back to the old per-node path.
+    KisNodeSP clickedNode = soloNodeForIndex(node);
+    KisImageSP image = clickedNode ? dynamic_cast<KisImage*>(clickedNode->graphListener()) : 0;
+    const bool batch = image;
+
+    if (batch) image->barrierLock();
+
     if (soloedIndexes.isEmpty()) {
         // The last solo was toggled off: restore the exact visibility every layer
         // had before soloing began (NOT a blanket "make everything visible").
-        restorePropertyInStasisRecursive(root, clickedProperty);
-        shiftClickedIndexes.clear();
-        return;
+        restorePropertyInStasisRecursive(root, clickedProperty, batch);
+    } else {
+        // Build the union of "families" so a soloed group reveals its children and a
+        // soloed child keeps its parent groups visible (otherwise it can't render).
+        QList<QModelIndex> items;
+        for (const QPersistentModelIndex &p : soloedIndexes) {
+            if (!p.isValid()) continue;
+            const QModelIndex idx(p);
+            getParentsIndex(items, idx);
+            getChildrenIndex(items, idx);
+        }
+
+        // Record the genuine pre-solo state only when a session first begins; on later
+        // adds/removes we recompute visibility (Review) without clobbering the saved state.
+        const StasisOperation record = sessionWasEmpty ? StasisOperation::Record : StasisOperation::Review;
+        if (record == StasisOperation::Record) {
+            // Clear any stale stasis (e.g. from a prior shift+click eye solo) so the
+            // recorded "original" visibility is the real one.
+            restorePropertyInStasisRecursive(root, clickedProperty, batch);
+        }
+        togglePropertyRecursive(root, clickedProperty, items, record, true /* include mode */, batch);
     }
 
-    // Build the union of "families" so a soloed group reveals its children and a
-    // soloed child keeps its parent groups visible (otherwise it can't render).
-    QList<QModelIndex> items;
-    for (const QPersistentModelIndex &p : soloedIndexes) {
-        if (!p.isValid()) continue;
-        const QModelIndex idx(p);
-        getParentsIndex(items, idx);
-        getChildrenIndex(items, idx);
+    if (batch) {
+        image->unlock();
+        image->refreshGraphAsync();   // single full recompose for the whole solo flip
     }
-
-    // Record the genuine pre-solo state only when a session first begins; on later
-    // adds/removes we recompute visibility (Review) without clobbering the saved state.
-    const StasisOperation record = sessionWasEmpty ? StasisOperation::Record : StasisOperation::Review;
-    if (record == StasisOperation::Record) {
-        // Clear any stale stasis (e.g. from a prior shift+click eye solo) so the
-        // recorded "original" visibility is the real one.
-        restorePropertyInStasisRecursive(root, clickedProperty);
-    }
-    togglePropertyRecursive(root, clickedProperty, items, record, true /* include mode */);
     shiftClickedIndexes.clear();
 }
 
