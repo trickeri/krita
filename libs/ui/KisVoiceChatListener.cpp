@@ -12,7 +12,9 @@
 #include <QLocalSocket>
 #include <QTimer>
 
+#ifdef Q_OS_UNIX
 #include <unistd.h>
+#endif
 
 KisVoiceChatListener::KisVoiceChatListener(QObject *parent)
     : QObject(parent)
@@ -38,11 +40,16 @@ QString KisVoiceChatListener::socketPath()
     if (!path.isEmpty()) {
         return QString::fromLocal8Bit(path);
     }
+#ifdef Q_OS_WIN
+    // QLocalSocket speaks named pipes here, so a bare name is the whole address.
+    return QStringLiteral("voicechat");
+#else
     QByteArray runtimeDir = qgetenv("XDG_RUNTIME_DIR");
     if (runtimeDir.isEmpty()) {
         runtimeDir = QByteArrayLiteral("/run/user/") + QByteArray::number(static_cast<qlonglong>(getuid()));
     }
     return QString::fromLocal8Bit(runtimeDir) + QStringLiteral("/voicechat.sock");
+#endif
 }
 
 void KisVoiceChatListener::tryConnect()

@@ -38,7 +38,10 @@ public:
     explicit KisVoiceChatListener(QObject *parent = nullptr);
     ~KisVoiceChatListener() override;
 
-    /** @brief The transcript socket path: @c $VOICECHAT_SOCKET, else @c $XDG_RUNTIME_DIR/voicechat.sock. */
+    /**
+     * @brief The transcript socket path: @c $VOICECHAT_SOCKET, else @c $XDG_RUNTIME_DIR/voicechat.sock
+     * on Unix and the named pipe @c voicechat on Windows.
+     */
     static QString socketPath();
 
 Q_SIGNALS:
